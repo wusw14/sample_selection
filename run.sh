@@ -22,8 +22,8 @@
 
 # nohup python -u run_eval.py 4,5 --dataset WA > logs/45.log 2>&1 &
 
-# nohup python -u run_select.py 4,5 --dataset FZ BR IA AG DS > logs/45.log 2>&1 &
-# nohup python -u run_select.py 6,7 --dataset WA AB DA watches cameras shoes computers > logs/67.log 2>&1 &
+# nohup python -u run_select.py 6,7 --dataset FZ BR IA AG DS > logs/67.log 2>&1 &
+# nohup python -u run_select.py 0,1,2,3,4,5 --dataset WA AB DA watches cameras shoes computers > logs/67.log 2>&1 &
 
 # nohup python -u run_select.py 4,5 --dataset DA watches cameras shoes computers > logs/67.log 2>&1 &
 
