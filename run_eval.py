@@ -98,13 +98,13 @@ for dataset in dataset_list:
         "votek",
         "adaicl",
         "our",
-    ][:-1]:
+    ][-1:]:
         for budget in [6, 8, 10, 20]:
             for lm in ["llama2-7b", "llama2-13b", "llama2-70b"]:
-                if os.path.exists(f"logs/inference_1115/{dataset}") is False:
-                    os.makedirs(f"logs/inference_1115/{dataset}")
+                if os.path.exists(f"logs/inference_1116/{dataset}") is False:
+                    os.makedirs(f"logs/inference_1116/{dataset}")
                 if os.path.exists(
-                    f"logs/inference_1115/{dataset}/{selection_method}_{budget}_{lm}.log"
+                    f"logs/inference_1116/{dataset}/{selection_method}_{budget}_{lm}.log"
                 ):
                     continue
                 cmd = (
@@ -112,7 +112,7 @@ for dataset in dataset_list:
                     f"python -u evaluate.py --lm {lm} --gpus {gpus} --dataset {dataset} "
                     f"--selection_method {selection_method} "
                     f"--budget {budget} --batch_size {batch_size}"
-                    f" > logs/inference_1115/{dataset}/{selection_method}_{budget}_{lm}.log"
+                    f" > logs/inference_1116/{dataset}/{selection_method}_{budget}_{lm}.log"
                 )
                 print(cmd)
                 os.system(cmd)
