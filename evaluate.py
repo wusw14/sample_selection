@@ -147,6 +147,11 @@ def initialization(args):
 
 if __name__ == "__main__":
     args = parse_args()
+    output_file = f"results_1116/{args.dataset}/{args.selection_method}_{args.budget}_{args.lm}.csv"
+    if os.path.exists(output_file):
+        print("File exists")
+        exit()
+
     (model_name, model, tokenizer, test_prompts, test_labels) = initialization(args)
     start_time = time.time()
     preds, probs = inference(model_name, model, tokenizer, test_prompts, args)
@@ -158,5 +163,5 @@ if __name__ == "__main__":
     df_result = pd.DataFrame({"label": test_labels, "pred": preds, "prob": probs})
     if os.path.exists(f"results_1116/{args.dataset}") is False:
         os.makedirs(f"results_1116/{args.dataset}")
-    output_file = f"results_1116/{args.dataset}/{args.selection_method}_{args.budget}_{args.lm}.csv"
+
     df_result.to_csv(output_file, index=False)
