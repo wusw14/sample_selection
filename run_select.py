@@ -24,6 +24,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("gpus", type=str)
 parser.add_argument("--dataset", type=str, nargs="+", default=["AG", "AB"])
 parser.add_argument("--dirty", action="store_true")
+parser.add_argument("--version", type=str, default="1117")
 args = parser.parse_args()
 gpus = args.gpus
 print(args)
@@ -82,14 +83,15 @@ for dataset in dataset_list:
             for lm in ["llama2-7b", "llama2-13b", "llama2-70b"]:
                 if selection_method in ["MFL", "fast_votek"] and lm != "llama2-70b":
                     continue
-                if os.path.exists(f"logs/select_1116/{dataset}") is False:
-                    os.makedirs(f"logs/select_1116/{dataset}")
+                if os.path.exists(f"logs/select_{args.version}/{dataset}") is False:
+                    os.makedirs(f"logs/select_{args.version}/{dataset}")
                 cmd = (
                     f"CUDA_VISIBLE_DEVICES={gpus} "
                     f"python -u main.py --lm {lm} --gpus {gpus} --dataset {dataset} "
                     f"--selection_method {selection_method} "
-                    f"--budget {budget} --batch_size {batch_size}"
-                    f" >> logs/select_1116/{dataset}/{selection_method}_{budget}_{lm}.log"
+                    f"--budget {budget} --batch_size {batch_size} "
+                    f"--version {args.version} "
+                    f" >> logs/select_{args.version}/{dataset}/{selection_method}_{budget}_{lm}.log"
                 )
                 print(cmd)
                 os.system(cmd)

@@ -104,7 +104,7 @@ if __name__ == "__main__":
     print(args, "\n\n")
     np.random.seed(args.seed)
 
-    data_dir = args.data_dir.replace("data", "new_data_1116")
+    data_dir = args.data_dir.replace("data", f"new_data_{args.version}")
     if os.path.exists(data_dir) is False:
         os.makedirs(data_dir)
     if args.selection_method in ["MFL", "fast_votek"]:

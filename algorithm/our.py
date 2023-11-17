@@ -4,6 +4,29 @@ from scipy.spatial import distance_matrix
 from utils.prompt import construct_prompt
 from utils.inference import inference
 import pandas as pd
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+import math
+
+
+def fast_votek(probs_reps, uncertain_indices):
+    sim_matrix = distance_matrix(probs_reps, probs_reps, p=1)
+
+    # build the graph
+    n = len(probs_reps)
+    k = math.ceil(n / 2)
+    vote_stat = defaultdict(int)
+    for i in range(n):
+        cur_scores = sim_matrix[i]
+        sorted_indices = np.argsort(cur_scores).tolist()[:k]
+        for idx in sorted_indices:
+            if idx != i:
+                vote_stat[idx] += 1
+
+    # select the samples
+    votes = sorted(vote_stat.items(), key=lambda x: x[1], reverse=True)
+    cur_selected_idx = votes[0][0]
+    return uncertain_indices[int(cur_selected_idx)]
 
 
 def cal_cosine_sim(args):
@@ -132,27 +155,47 @@ def our(model_name, model, tokenizer, inputs, labels, embeddings, args):
                             / scaler
                         )
 
-        conf = np.clip(conf, 0, certain_thr)
-        historical_confs.append(conf)  # [T, N]
-        historical_probs.append(probs)  # [T, N]
         cond1 = conf < certain_thr
-        cond2 = conf < np.max(historical_confs, axis=0)
+        cond2 = (
+            conf < np.max(historical_confs, axis=0)
+            if len(historical_confs) > 0
+            else (conf < certain_thr)
+        )
+        conf[selected_indices] = 1
         if np.sum(cond1 * cond2) > 0:
             uncertain_indices = np.where(cond1 * cond2)[0]
         elif np.sum(cond1) > 0:
-            uncertain_indices = np.where(cond1)[0]
+            uncertain_indices = np.where(cond1)[0]  # not confident
+        elif np.sum(cond2) > 0:
+            uncertain_indices = np.where(cond2)[0]  # less confident than before
         else:
-            uncertain_indices = np.arange(len(inputs))
+            uncertain_indices = [np.argmin(conf)]  # least confident
+        print(f"uncertain_indices ({len(uncertain_indices)}): {uncertain_indices}")
+        conf = np.clip(conf, 0, certain_thr)
+        historical_confs.append(conf)  # [T, N]
+        historical_probs.append(probs)  # [T, N]
 
-        # calculate similarity between samples based on their predicted probs
-        probs_reps = np.array(historical_probs)[:, uncertain_indices].T  # [K, T]
-        dist_matrix = distance_matrix(probs_reps, probs_reps, p=1)  # [K, K]
-        dist_score = np.sum(dist_matrix, axis=1)  # [K]
-        idx = uncertain_indices[np.argmin(dist_score)]
+        if len(uncertain_indices) > 2:
+            # calculate similarity between samples based on their predicted probs
+            probs_reps = np.array(historical_probs)[:, uncertain_indices].T  # [K, T]
+            idx = fast_votek(probs_reps, uncertain_indices)
+        elif len(uncertain_indices) == 2:
+            diff1 = (
+                np.max(historical_confs[uncertain_indices[0]])
+                - conf[uncertain_indices[0]]
+            )
+            diff2 = (
+                np.max(historical_confs[uncertain_indices[1]])
+                - conf[uncertain_indices[1]]
+            )
+            if diff1 > diff2:
+                idx = uncertain_indices[0]
+            else:
+                idx = uncertain_indices[1]
+        else:
+            idx = uncertain_indices[0]
         probs_output = [f"{v:.4f}" for v in probs]
 
-        print(f"uncertain_indices ({len(uncertain_indices)}): {uncertain_indices}")
-        print(f"dist_score: {dist_score}")
         print(
             f"index: {idx}, label: {labels[idx]}, pred: {probs[idx]:.2f}, conf: {conf[idx]:.2f}"
         )
@@ -164,10 +207,7 @@ def our(model_name, model, tokenizer, inputs, labels, embeddings, args):
         example_labels.append(labels[idx])
         example_embeddings.append(embeddings[idx])
     while len(selected_indices) < args.budget:
-        idx = np.argmax(scores)
-        if idx in selected_indices:
-            scores[idx] = -100
-        else:
-            selected_indices.append(idx)
+        break
+        # TODO
     selected_indices = [candidate_indices[idx] for idx in selected_indices]
     return selected_indices

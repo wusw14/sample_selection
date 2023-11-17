@@ -83,7 +83,7 @@ def parse_args():
 
 def load_selected_indices(args):
     # load selected indices
-    data_dir = args.data_dir.replace("data", "new_data_1116")
+    data_dir = args.data_dir.replace("data", "new_data_{args.version}")
     if args.selection_method in ["MFL", "fast_votek"]:
         input_file = os.path.join(data_dir, f"{args.selection_method}.csv")
     else:
@@ -147,7 +147,7 @@ def initialization(args):
 
 if __name__ == "__main__":
     args = parse_args()
-    output_file = f"results_1116/{args.dataset}/{args.selection_method}_{args.budget}_{args.lm}.csv"
+    output_file = f"results_{args.version}/{args.dataset}/{args.selection_method}_{args.budget}_{args.lm}.csv"
     if os.path.exists(output_file):
         print("File exists")
         exit()
@@ -161,7 +161,7 @@ if __name__ == "__main__":
     print(f"Precision {precision:.2f} Recall {recall:.2f} F1 {f1:.2f}")
 
     df_result = pd.DataFrame({"label": test_labels, "pred": preds, "prob": probs})
-    if os.path.exists(f"results_1116/{args.dataset}") is False:
-        os.makedirs(f"results_1116/{args.dataset}")
+    if os.path.exists(f"results_{args.version}/{args.dataset}") is False:
+        os.makedirs(f"results_{args.version}/{args.dataset}")
 
     df_result.to_csv(output_file, index=False)
