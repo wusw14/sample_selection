@@ -181,11 +181,11 @@ def our(model_name, model, tokenizer, inputs, labels, embeddings, args):
             idx = fast_votek(probs_reps, uncertain_indices)
         elif len(uncertain_indices) == 2:
             diff1 = (
-                np.max(historical_confs[uncertain_indices[0]])
+                np.max(np.array(historical_confs)[:, uncertain_indices[0]])
                 - conf[uncertain_indices[0]]
             )
             diff2 = (
-                np.max(historical_confs[uncertain_indices[1]])
+                np.max(np.array(historical_confs)[:, uncertain_indices[0]])
                 - conf[uncertain_indices[1]]
             )
             if diff1 > diff2:
