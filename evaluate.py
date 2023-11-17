@@ -83,7 +83,7 @@ def parse_args():
 
 def load_selected_indices(args):
     # load selected indices
-    data_dir = args.data_dir.replace("data", "new_data_{args.version}")
+    data_dir = args.data_dir.replace("data", f"new_data_{args.version}")
     if args.selection_method in ["MFL", "fast_votek"]:
         input_file = os.path.join(data_dir, f"{args.selection_method}.csv")
     else:
