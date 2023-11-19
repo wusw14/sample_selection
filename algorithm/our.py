@@ -9,6 +9,33 @@ from sklearn.metrics import silhouette_score
 import math
 
 
+def select(probs_reps, uncertain_indices):
+    """
+    probs: [K, T]
+    """
+    T = len(probs_reps[0])
+    # weighted average of prob_reps
+    weights = np.array([1.0 / 2 ** (T - i) for i in range(T)])
+    weights = weights / np.sum(weights)
+    probs = np.sum(np.array(probs_reps) * weights[None,], axis=1)
+    print(probs)
+    potential_pos = np.where(probs > 0.5)[0]
+    potential_neg = np.where(probs <= 0.5)[0]
+    print("potential_pos:", potential_pos)
+    print("potential_neg:", potential_neg)
+    if len(potential_pos) >= len(potential_neg):
+        candidate_reps = np.array(probs_reps)[potential_pos]
+        uncertain_indices = np.array(uncertain_indices)[potential_pos]
+    else:
+        candidate_reps = np.array(probs_reps)[potential_neg]
+        uncertain_indices = np.array(uncertain_indices)[potential_neg]
+
+    dist_matrix = distance_matrix(candidate_reps, candidate_reps, p=1)
+    dist = np.sum(dist_matrix, axis=0)
+    idx = np.argmin(dist)
+    return uncertain_indices[idx]
+
+
 def fast_votek(probs_reps, uncertain_indices):
     sim_matrix = distance_matrix(probs_reps, probs_reps, p=1)
 
@@ -121,39 +148,6 @@ def our(model_name, model, tokenizer, inputs, labels, embeddings, args):
         probs = np.array(probs)
         probs = np.clip(probs, 1e-6, 1 - 1e-6)
         conf = 1 + (probs * np.log(probs) + (1 - probs) * np.log(1 - probs)) / scaler
-        if len(example_inputs) > 2:
-            # infer again for the examples with low confidence
-            inputs2 = [
-                inputs[idx] for idx in range(len(inputs)) if conf[idx] < certain_thr
-            ]
-            if len(inputs2) > 0:
-                embeddings2 = [
-                    embeddings[idx]
-                    for idx in range(len(inputs))
-                    if conf[idx] < certain_thr
-                ]
-                prompts2 = construct_prompt(
-                    example_inputs,
-                    example_labels,
-                    example_embeddings,
-                    inputs2,
-                    embeddings2,
-                    args,
-                )
-                print(prompts2[0])
-                print("---------------\n\n")
-                _, probs2 = inference(model_name, model, tokenizer, prompts2, args)
-                for idx in range(len(inputs)):
-                    if conf[idx] < certain_thr:
-                        probs[idx] = (probs2.pop(0) + probs[idx]) / 2.0
-                        conf[idx] = (
-                            1
-                            + (
-                                probs[idx] * np.log(probs[idx])
-                                + (1 - probs[idx]) * np.log(1 - probs[idx])
-                            )
-                            / scaler
-                        )
 
         cond1 = conf < certain_thr
         cond2 = (
@@ -178,7 +172,8 @@ def our(model_name, model, tokenizer, inputs, labels, embeddings, args):
         if len(uncertain_indices) > 2:
             # calculate similarity between samples based on their predicted probs
             probs_reps = np.array(historical_probs)[:, uncertain_indices].T  # [K, T]
-            idx = fast_votek(probs_reps, uncertain_indices)
+            # idx = fast_votek(probs_reps, uncertain_indices)
+            idx = select(probs_reps, uncertain_indices)
         elif len(uncertain_indices) == 2:
             diff1 = (
                 np.max(np.array(historical_confs)[:, uncertain_indices[0]])
