@@ -113,7 +113,7 @@ for dataset in dataset_list:
                     f"python -u evaluate.py --lm {lm} --gpus {gpus} --dataset {dataset} "
                     f"--selection_method {selection_method} "
                     f"--budget {budget} --batch_size {batch_size} "
-                    f"--version {args.version} "
+                    f"--version {args.version} --order o6"
                     f" > logs/inference_{args.version}/{dataset}/{selection_method}_{budget}_{lm}.log"
                 )
                 print(cmd)
