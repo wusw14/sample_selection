@@ -1,9 +1,10 @@
 import os
 import pandas as pd
 from utils.misc import evaluate
+import sys
 
 
-result_dir = "results_1116"
+result_dir = f"results_{sys.argv[1]}"
 datasets = os.listdir(result_dir)
 for dataset in datasets:
     f1_list = []

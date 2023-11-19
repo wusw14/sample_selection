@@ -131,6 +131,7 @@ def initialization(args):
     np.random.seed(args.seed)
 
     example_inputs, example_labels, example_embeddings = load_in_context_examples(args)
+    print(example_labels)
     test_entry_pairs, test_labels, test_embeddings = load_test(args)
     test_prompts = construct_prompt(
         example_inputs,

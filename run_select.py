@@ -90,7 +90,7 @@ for dataset in dataset_list:
                     f"python -u main.py --lm {lm} --gpus {gpus} --dataset {dataset} "
                     f"--selection_method {selection_method} "
                     f"--budget {budget} --batch_size {batch_size} "
-                    f"--version {args.version} "
+                    f"--version {args.version} --order o7 "
                     f" >> logs/select_{args.version}/{dataset}/{selection_method}_{budget}_{lm}.log"
                 )
                 print(cmd)
