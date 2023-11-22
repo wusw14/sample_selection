@@ -95,3 +95,8 @@ for dataset in dataset_list:
                 )
                 print(cmd)
                 os.system(cmd)
+
+
+cmd = f"CUDA_VISIBLE_DEVICES={gpus} python -u inference.py"
+print(cmd)
+os.system(cmd)

@@ -36,22 +36,22 @@ memoryInfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
 
 print(memoryInfo.used / memoryInfo.total)
 cnt, iter_num = 0, 0
-while True:
-    handle = pynvml.nvmlDeviceGetHandleByIndex(int(gpus.split(",")[0]))
-    memoryInfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
-    memory = memoryInfo.used / memoryInfo.total
-    if memory > 0.05:
-        cnt = 0
-        time.sleep(300)
-        iter_num += 1
-    else:
-        cnt += 1
-        print(f"cnt: {cnt}, memory: {memory}")
-        time.sleep(np.random.randint(10, 20))
-    if iter_num % 12 == 0:
-        print(f"{iter_num//12} hours passed")
-    if cnt > 30:
-        break
+# while True:
+#     handle = pynvml.nvmlDeviceGetHandleByIndex(int(gpus.split(",")[0]))
+#     memoryInfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
+#     memory = memoryInfo.used / memoryInfo.total
+#     if memory > 0.05:
+#         cnt = 0
+#         time.sleep(300)
+#         iter_num += 1
+#     else:
+#         cnt += 1
+#         print(f"cnt: {cnt}, memory: {memory}")
+#         time.sleep(np.random.randint(10, 20))
+#     if iter_num % 12 == 0:
+#         print(f"{iter_num//12} hours passed")
+#     if cnt > 30:
+#         break
 
 batch_size = 2
 
@@ -118,3 +118,7 @@ for dataset in dataset_list:
                 )
                 print(cmd)
                 os.system(cmd)
+
+cmd = f"CUDA_VISIBLE_DEVICES={gpus} python -u inference.py"
+print(cmd)
+os.system(cmd)

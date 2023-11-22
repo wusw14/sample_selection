@@ -7,33 +7,89 @@ import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 import math
+from utils.misc import evaluate
 
 
-def select(probs_reps, uncertain_indices):
-    """
-    probs: [K, T]
-    """
+def agg_probs(probs_reps):
+    probs_reps = np.array(probs_reps)[:, -2:]
     T = len(probs_reps[0])
     # weighted average of prob_reps
     weights = np.array([1.0 / 2 ** (T - i) for i in range(T)])
     weights = weights / np.sum(weights)
     probs = np.sum(np.array(probs_reps) * weights[None,], axis=1)
-    print(probs)
+    return probs_reps, probs
+
+
+def split_candidates(probs_reps, probs, uncertain_indices):
     potential_pos = np.where(probs > 0.5)[0]
     potential_neg = np.where(probs <= 0.5)[0]
-    print("potential_pos:", potential_pos)
-    print("potential_neg:", potential_neg)
-    if len(potential_pos) >= len(potential_neg):
-        candidate_reps = np.array(probs_reps)[potential_pos]
-        uncertain_indices = np.array(uncertain_indices)[potential_pos]
-    else:
-        candidate_reps = np.array(probs_reps)[potential_neg]
-        uncertain_indices = np.array(uncertain_indices)[potential_neg]
+    print("potential_pos:")
+    for idx in potential_pos:
+        print(uncertain_indices[idx], probs_reps[idx])
+    print("potential_neg:")
+    for idx in potential_neg:
+        print(uncertain_indices[idx], probs_reps[idx])
+    return uncertain_indices[potential_pos], uncertain_indices[potential_neg]
 
-    dist_matrix = distance_matrix(candidate_reps, candidate_reps, p=1)
-    dist = np.sum(dist_matrix, axis=0)
-    idx = np.argmin(dist)
-    return uncertain_indices[idx]
+
+def get_next_target(selected_labels, potential_pos, potential_neg):
+    pos_num, neg_num = np.sum(selected_labels), len(selected_labels) - np.sum(
+        selected_labels
+    )
+    if pos_num > neg_num:
+        next_target = "neg_avg"
+        if pos_num - neg_num >= 2 or len(potential_neg) <= 2:
+            next_target = "neg_most_conf"
+    elif pos_num < neg_num:
+        next_target = "pos_avg"
+        if neg_num - pos_num >= 2 or len(potential_pos) <= 2:
+            next_target = "pos_most_conf"
+    else:
+        if len(potential_pos) >= len(potential_neg):
+            next_target = "pos_avg"
+        else:
+            next_target = "neg_avg"
+    return next_target
+
+
+def select(probs_reps, conf_reps, uncertain_indices, selected_labels):
+    """
+    probs: [K, T]
+    """
+    probs_reps, probs = agg_probs(probs_reps)
+    conf_reps, _ = agg_probs(conf_reps)
+    potential_pos, potential_neg = split_candidates(
+        probs_reps, probs, uncertain_indices
+    )
+    next_target = get_next_target(selected_labels, potential_pos, potential_neg)
+    print(f"next_target: {next_target}")
+
+    if next_target == "pos_avg":
+        probs_reps = np.array(probs_reps)[probs > 0.5]
+        conf_reps = np.array(conf_reps)[probs > 0.5]
+        uncertain_indices = potential_pos
+    elif next_target == "neg_avg":
+        probs_reps = np.array(probs_reps)[probs <= 0.5]
+        conf_reps = np.array(conf_reps)[probs <= 0.5]
+        uncertain_indices = potential_neg
+    candidate_reps = np.concatenate([probs_reps, conf_reps], axis=1)
+
+    if next_target == "pos_most_conf":
+        if len(potential_pos) > 0:
+            idx = np.argmax(probs)
+        else:
+            return None, next_target
+    elif next_target == "neg_most_conf":
+        if len(potential_neg) > 0:
+            idx = np.argmin(probs)
+        else:
+            return None
+    else:
+        dist_matrix = distance_matrix(candidate_reps, candidate_reps, p=1)
+        dist = np.sum(dist_matrix, axis=0)
+        idx = np.argmin(dist)
+
+    return uncertain_indices[idx], next_target
 
 
 def fast_votek(probs_reps, uncertain_indices):
@@ -145,48 +201,62 @@ def our(model_name, model, tokenizer, inputs, labels, embeddings, args):
         print(prompts[0])
         print("---------------\n\n")
         _, probs = inference(model_name, model, tokenizer, prompts, args)
+        precision, recall, f1 = evaluate(labels, np.array(probs) > 0.5)
+        print(f"Precision {precision:.2f} Recall {recall:.2f} F1 {f1:.2f}")
         probs = np.array(probs)
         probs = np.clip(probs, 1e-6, 1 - 1e-6)
         conf = 1 + (probs * np.log(probs) + (1 - probs) * np.log(1 - probs)) / scaler
+        conf[selected_indices] = 1
 
         cond1 = conf < certain_thr
-        cond2 = (
-            conf < np.max(historical_confs, axis=0)
-            if len(historical_confs) > 0
-            else (conf < certain_thr)
-        )
+        # cond2 = (
+        #     conf < np.max(historical_confs, axis=0)
+        #     if len(historical_confs) > 0
+        #     else (conf < certain_thr)
+        # )
         conf[selected_indices] = 1
-        if np.sum(cond1 * cond2) > 0:
-            uncertain_indices = np.where(cond1 * cond2)[0]
-        elif np.sum(cond1) > 0:
+        # if np.sum(cond1 * cond2) > 0:
+        #     uncertain_indices = np.where(cond1 * cond2)[0]
+        #     flag_type = "both"
+        if np.sum(cond1) > 0:
             uncertain_indices = np.where(cond1)[0]  # not confident
-        elif np.sum(cond2) > 0:
-            uncertain_indices = np.where(cond2)[0]  # less confident than before
+            flag_type = "conf"
+        # elif np.sum(cond2) > 0:
+        #     uncertain_indices = np.where(cond2)[0]  # less confident than before
+        #     flag_type = "hist"
         else:
-            uncertain_indices = [np.argmin(conf)]  # least confident
+            conf_temp = conf.copy()
+            if np.sum(example_labels) * 2 > len(example_labels):  # next: neg
+                conf_temp[probs > 0.5] = 1
+            elif np.sum(example_labels) * 2 < len(example_labels):
+                conf_temp[probs <= 0.5] = 1
+            uncertain_indices = [np.argmin(conf_temp)]  # least confident
+            flag_type = "all confident"
+        print(f"flag_type: {flag_type}")
         print(f"uncertain_indices ({len(uncertain_indices)}): {uncertain_indices}")
-        conf = np.clip(conf, 0, certain_thr)
+        # conf = np.clip(conf, 0, certain_thr)
         historical_confs.append(conf)  # [T, N]
         historical_probs.append(probs)  # [T, N]
 
-        if len(uncertain_indices) > 2:
+        if len(uncertain_indices) > 1:
             # calculate similarity between samples based on their predicted probs
             probs_reps = np.array(historical_probs)[:, uncertain_indices].T  # [K, T]
+            conf_reps = np.array(historical_confs)[:, uncertain_indices].T  # [K, T]
             # idx = fast_votek(probs_reps, uncertain_indices)
-            idx = select(probs_reps, uncertain_indices)
-        elif len(uncertain_indices) == 2:
-            diff1 = (
-                np.max(np.array(historical_confs)[:, uncertain_indices[0]])
-                - conf[uncertain_indices[0]]
+            idx, next_target = select(
+                probs_reps, conf_reps, uncertain_indices, example_labels
             )
-            diff2 = (
-                np.max(np.array(historical_confs)[:, uncertain_indices[0]])
-                - conf[uncertain_indices[1]]
-            )
-            if diff1 > diff2:
-                idx = uncertain_indices[0]
-            else:
-                idx = uncertain_indices[1]
+            if idx is None:
+                if next_target == "pos_most_conf":
+                    conf_temp = conf.copy()
+                    conf_temp[probs <= 0.5] = 1
+                    idx = np.argmin(conf_temp)
+                elif next_target == "neg_most_conf":
+                    conf_temp = conf.copy()
+                    conf_temp[probs > 0.5] = 1
+                    idx = np.argmin(conf_temp)
+                else:
+                    raise ValueError
         else:
             idx = uncertain_indices[0]
         probs_output = [f"{v:.4f}" for v in probs]
@@ -196,6 +266,7 @@ def our(model_name, model, tokenizer, inputs, labels, embeddings, args):
         )
         result = [v for v in zip(range(len(labels)), labels, probs_output)]
         print(result)
+        print(f"selected_indices: {selected_indices}")
         print(f"****************\n\n")
         selected_indices.append(idx)
         example_inputs.append(inputs[idx])
