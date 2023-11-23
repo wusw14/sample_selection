@@ -96,20 +96,26 @@ def select(
         # dist = np.sum(dist_matrix, axis=0)
         # idx = np.argmin(dist)
         historical_probs = np.array(historical_probs).T  # [N, T]
+        _, probs = agg_probs(historical_probs)
         historical_probs = np.clip(historical_probs, 0.35, 0.65)
         historical_probs = historical_probs[:, -2:]
         T = len(historical_probs[0])
         weights = np.array([1.0 / 2 ** (T - i) for i in range(T)])
         weights = weights / np.sum(weights)
         probs_reps = historical_probs * weights[None,]
+        # if "pos" in next_target:
+        #     probs_reps_subset = probs_reps[probs > 0.5]
+        # else:
+        #     probs_reps_subset = probs_reps[probs <= 0.5]
+        probs_reps_subset = probs_reps
         # calculate distance between selected indices and all the samples
         dist_selected = distance_matrix(
-            probs_reps[selected_indices], probs_reps, p=1
+            probs_reps[selected_indices], probs_reps_subset, p=1
         )  # [K, N]
         dist_min_cur = np.min(dist_selected, axis=0)  # [N]
         # calculate the distance between the uncertain indices and all the samples
         dist_uncertain = distance_matrix(
-            probs_reps[uncertain_indices], probs_reps, p=1
+            probs_reps[uncertain_indices], probs_reps_subset, p=1
         )  # [K2, N]
         # calculate the improvement
         improvement = dist_min_cur[None,] - dist_uncertain  # [K2, N]
