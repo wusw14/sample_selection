@@ -10,8 +10,8 @@ import math
 from utils.misc import evaluate
 
 
-def agg_probs(probs_reps):
-    probs_reps = np.array(probs_reps)[:, -2:]
+def agg_probs(probs_reps, window=2):
+    probs_reps = np.array(probs_reps)[:, -window:]
     T = len(probs_reps[0])
     # weighted average of prob_reps
     weights = np.array([1.0 / 2 ** (T - i) for i in range(T)])
@@ -52,7 +52,14 @@ def get_next_target(selected_labels, potential_pos, potential_neg):
     return next_target
 
 
-def select(probs_reps, conf_reps, uncertain_indices, selected_labels):
+def select(
+    historical_probs,
+    probs_reps,
+    conf_reps,
+    uncertain_indices,
+    selected_labels,
+    selected_indices,
+):
     """
     probs: [K, T]
     """
@@ -66,13 +73,13 @@ def select(probs_reps, conf_reps, uncertain_indices, selected_labels):
 
     if next_target == "pos_avg":
         probs_reps = np.array(probs_reps)[probs > 0.5]
-        conf_reps = np.array(conf_reps)[probs > 0.5]
+        # conf_reps = np.array(conf_reps)[probs > 0.5]
         uncertain_indices = potential_pos
     elif next_target == "neg_avg":
         probs_reps = np.array(probs_reps)[probs <= 0.5]
-        conf_reps = np.array(conf_reps)[probs <= 0.5]
+        # conf_reps = np.array(conf_reps)[probs <= 0.5]
         uncertain_indices = potential_neg
-    candidate_reps = np.concatenate([probs_reps, conf_reps], axis=1)
+    # candidate_reps = np.concatenate([probs_reps, conf_reps], axis=1)
 
     if next_target == "pos_most_conf":
         if len(potential_pos) > 0:
@@ -83,12 +90,34 @@ def select(probs_reps, conf_reps, uncertain_indices, selected_labels):
         if len(potential_neg) > 0:
             idx = np.argmin(probs)
         else:
-            return None
+            return None, next_target
     else:
-        dist_matrix = distance_matrix(candidate_reps, candidate_reps, p=1)
-        dist = np.sum(dist_matrix, axis=0)
-        idx = np.argmin(dist)
-
+        # dist_matrix = distance_matrix(candidate_reps, candidate_reps, p=1)
+        # dist = np.sum(dist_matrix, axis=0)
+        # idx = np.argmin(dist)
+        historical_probs = np.array(historical_probs).T  # [N, T]
+        historical_probs = np.clip(historical_probs, 0.35, 0.65)
+        historical_probs = historical_probs[:, -2:]
+        T = len(historical_probs[0])
+        weights = np.array([1.0 / 2 ** (T - i) for i in range(T)])
+        weights = weights / np.sum(weights)
+        probs_reps = historical_probs * weights[None,]
+        # calculate distance between selected indices and all the samples
+        dist_selected = distance_matrix(
+            probs_reps[selected_indices], probs_reps, p=1
+        )  # [K, N]
+        dist_min_cur = np.min(dist_selected, axis=0)  # [N]
+        # calculate the distance between the uncertain indices and all the samples
+        dist_uncertain = distance_matrix(
+            probs_reps[uncertain_indices], probs_reps, p=1
+        )  # [K2, N]
+        # calculate the improvement
+        improvement = dist_min_cur[None,] - dist_uncertain  # [K2, N]
+        improvement = np.clip(improvement, 0, None)
+        print(np.sum(improvement > 0, axis=1))
+        improvement = np.sum(improvement, axis=1)  # [N]
+        print(np.round(improvement, 3))
+        idx = np.argmax(improvement)
     return uncertain_indices[idx], next_target
 
 
@@ -169,6 +198,30 @@ def stratified_sampling(inputs, labels, embeddings, cosine_of_each_pair, args):
     return sample_inputs, sample_labels, sample_embeddings, sample_indices, scores
 
 
+def MFL(historical_probs, uncertain_indices, selected_indices):
+    historical_probs = np.array(historical_probs).T  # [N, T]
+    T = len(historical_probs[0])
+    weights = np.array([1.0 / 2 ** (T - i) for i in range(T)])
+    weights = weights / np.sum(weights)
+    probs_reps = historical_probs * weights[None,]
+    # calculate distance between selected indices and all the samples
+    dist_selected = distance_matrix(
+        probs_reps[selected_indices], probs_reps, p=1
+    )  # [K, N]
+    dist_min_cur = np.min(dist_selected, axis=0)  # [N]
+    # calculate the distance between the uncertain indices and all the samples
+    dist_uncertain = distance_matrix(
+        probs_reps[uncertain_indices], probs_reps, p=1
+    )  # [K2, N]
+    # calculate the improvement
+    improvement = dist_min_cur[None,] - dist_uncertain  # [K2, N]
+    improvement = np.clip(improvement, 0, None)
+    improvement = np.sum(improvement, axis=1)  # [N]
+    print(improvement)
+    idx = np.argmax(improvement)
+    return uncertain_indices[idx]
+
+
 def our(model_name, model, tokenizer, inputs, labels, embeddings, args):
     # sample by cosine similarity
     cosine_of_each_pair = cal_cosine_sim(args)
@@ -209,21 +262,10 @@ def our(model_name, model, tokenizer, inputs, labels, embeddings, args):
         conf[selected_indices] = 1
 
         cond1 = conf < certain_thr
-        # cond2 = (
-        #     conf < np.max(historical_confs, axis=0)
-        #     if len(historical_confs) > 0
-        #     else (conf < certain_thr)
-        # )
         conf[selected_indices] = 1
-        # if np.sum(cond1 * cond2) > 0:
-        #     uncertain_indices = np.where(cond1 * cond2)[0]
-        #     flag_type = "both"
         if np.sum(cond1) > 0:
             uncertain_indices = np.where(cond1)[0]  # not confident
             flag_type = "conf"
-        # elif np.sum(cond2) > 0:
-        #     uncertain_indices = np.where(cond2)[0]  # less confident than before
-        #     flag_type = "hist"
         else:
             conf_temp = conf.copy()
             if np.sum(example_labels) * 2 > len(example_labels):  # next: neg
@@ -238,25 +280,46 @@ def our(model_name, model, tokenizer, inputs, labels, embeddings, args):
         historical_confs.append(conf)  # [T, N]
         historical_probs.append(probs)  # [T, N]
 
-        if len(uncertain_indices) > 1:
+        if flag_type == "conf":
             # calculate similarity between samples based on their predicted probs
             probs_reps = np.array(historical_probs)[:, uncertain_indices].T  # [K, T]
             conf_reps = np.array(historical_confs)[:, uncertain_indices].T  # [K, T]
             # idx = fast_votek(probs_reps, uncertain_indices)
             idx, next_target = select(
-                probs_reps, conf_reps, uncertain_indices, example_labels
+                historical_probs,
+                probs_reps,
+                conf_reps,
+                uncertain_indices,
+                example_labels,
+                selected_indices,
             )
+            print(f"just for check: idx={idx}, next_target={next_target}")
             if idx is None:
                 if next_target == "pos_most_conf":
                     conf_temp = conf.copy()
-                    conf_temp[probs <= 0.5] = 1
-                    idx = np.argmin(conf_temp)
+                    print(np.sum(probs > 0.5))
+                    print(probs[:10])
+                    if np.sum(probs > 0.5) > np.sum(example_labels):
+                        conf_temp[probs <= 0.5] = 1
+                        idx = np.argmin(conf_temp)
+                    else:
+                        probs_temp = probs.copy()
+                        probs_temp[selected_indices] = -1
+                        idx = np.argmax(probs_temp)
                 elif next_target == "neg_most_conf":
                     conf_temp = conf.copy()
-                    conf_temp[probs > 0.5] = 1
-                    idx = np.argmin(conf_temp)
+                    if np.sum(probs <= 0.5) > len(example_labels) - np.sum(
+                        example_labels
+                    ):
+                        conf_temp[probs > 0.5] = 1
+                        idx = np.argmin(conf_temp)
+                    else:
+                        probs_temp = probs.copy()
+                        probs_temp[selected_indices] = 1
+                        idx = np.argmin(probs)
                 else:
                     raise ValueError
+            # idx = MFL(historical_probs, uncertain_indices, selected_indices)
         else:
             idx = uncertain_indices[0]
         probs_output = [f"{v:.4f}" for v in probs]
