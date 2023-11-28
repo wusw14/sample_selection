@@ -4,7 +4,7 @@ from utils.misc import evaluate
 import sys
 
 
-result_dir = f"results_{sys.argv[1]}"
+result_dir = f"results/results_{sys.argv[1]}"
 datasets = os.listdir(result_dir)
 for dataset in datasets:
     f1_list = []

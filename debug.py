@@ -83,7 +83,7 @@ def parse_args():
 
 def load_selected_indices(args):
     # load selected indices
-    data_dir = args.data_dir.replace("data", f"new_data/{args.version}")
+    data_dir = args.data_dir.replace("data", f"new_data_{args.version}")
     if args.selection_method in ["MFL", "fast_votek"]:
         input_file = os.path.join(data_dir, f"{args.selection_method}.csv")
     else:
@@ -141,28 +141,23 @@ def initialization(args):
         test_embeddings,
         args,
     )
-    print(test_prompts[0])
     model_name, model, tokenizer = init_model(args)
     return model_name, model, tokenizer, test_prompts, test_labels
 
 
 if __name__ == "__main__":
     args = parse_args()
-    output_file = f"results/results_{args.version}/{args.dataset}/{args.selection_method}_{args.budget}_{args.lm}.csv"
-    if os.path.exists(output_file):
-        print("File exists")
-        exit()
 
     (model_name, model, tokenizer, test_prompts, test_labels) = initialization(args)
+
+    test_prompts = [
+        f"This is an entity matching task.\n\nEntry	title\nProduct A	'Concave Quantum + FG - White/Black'@en ' Concave Mens Soccer Cleats Firm Ground White/Black '@en\nProduct B	'Concave Quantum + FG - Black/White'@en ' Concave Mens Soccer Cleats Firm Ground Black/White '@en\nAre Product A and Product B the same? Yes.\n\nEntry	title\nProduct A	'Justin Kids' Stampede Waxy Boots'\nProduct B	'Nike Enfant Mercurial Vortex III FG - Noir/ Rose'@fr ' Nike chaussures pour enfant terrain sec noir rose '@fr\nAre Product A and Product B the same? No.\n\nEntry	title\nProduct A	'Justin Kids' Stampede Waxy Boots'\nProduct B	'Nike Enfant Mercurial Vortex III FG - Noir/ Rose'@fr ' Nike chaussures pour enfant terrain sec noir rose '@fr\nAre Product A and Product B the same?"
+    ]
+    test_prompts.append(
+        f"This is an entity matching task.\n\nEntry	title\nProduct A	'Concave Quantum + FG - White/Black'@en ' Concave Mens Soccer Cleats Firm Ground White/Black '@en\nProduct B	'Concave Quantum + FG - Black/White'@en ' Concave Mens Soccer Cleats Firm Ground Black/White '@en\nAre Product A and Product B the same? Yes.\n\nEntry	title\nProduct A	'Justin Kids' Stampede Waxy Boots'\nProduct B	'Nike Enfant Mercurial Vortex III FG - Noir/ Rose'@fr ' Nike chaussures pour enfant terrain sec noir rose '@fr\nAre Product A and Product B the same? No.\n\nEntry	title\nProduct A	'Concave Quantum + FG - White/Black'@en ' Concave Mens Soccer Cleats Firm Ground White/Black '@en\nProduct B	'Concave Quantum + FG - Black/White'@en ' Concave Mens Soccer Cleats Firm Ground Black/White '@en\nAre Product A and Product B the same?"
+    )
     start_time = time.time()
+    print(test_prompts[0])
     preds, probs = inference(model_name, model, tokenizer, test_prompts, args)
-    print(f"Time cost {time.time() - start_time}")
-
-    precision, recall, f1 = evaluate(test_labels, preds)
-    print(f"Precision {precision:.2f} Recall {recall:.2f} F1 {f1:.2f}")
-
-    df_result = pd.DataFrame({"label": test_labels, "pred": preds, "prob": probs})
-    if os.path.exists(f"results/results_{args.version}/{args.dataset}") is False:
-        os.makedirs(f"results/results_{args.version}/{args.dataset}")
-
-    df_result.to_csv(output_file, index=False)
+    print(preds)
+    print(probs)

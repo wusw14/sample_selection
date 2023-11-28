@@ -53,7 +53,7 @@ cnt, iter_num = 0, 0
 #     if cnt > 30:
 #         break
 
-batch_size = 2
+batch_size = 1
 
 for dataset in dataset_list:
     for selection_method in [

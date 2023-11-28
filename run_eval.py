@@ -53,40 +53,48 @@ cnt, iter_num = 0, 0
 #     if cnt > 30:
 #         break
 
-batch_size = 2
+batch_size = 1
 
-# for dataset in dataset_list:
-#     for selection_method in [
-#         "MFL",
-#         "fast_votek",
-#         "min_entropy",
-#         "max_entropy",
-#         "cbs_maxIG",
-#         "votek",
-#         "adaicl",
-#         "our"
-#     ][-1:]:
-#         for budget in [6, 8, 10, 20, 30, 40, 50]:
-#             if (
-#                 selection_method
-#                 in ["MFL", "fast_votek", "min_entropy", "max_entropy", "cbs_maxIG", "our"]
-#                 and budget < 50
-#             ):
-#                 continue
-#             for lm in ["llama2-7b", "llama2-13b", "llama2-70b"]:
-#                 if selection_method in ["MFL", "fast_votek"] and lm != "llama2-70b":
-#                     continue
-#                 if os.path.exists(f"logs/select/{dataset}") is False:
-#                     os.makedirs(f"logs/select/{dataset}")
-#                 cmd = (
-#                     f"CUDA_VISIBLE_DEVICES={gpus} "
-#                     f"python -u main.py --lm {lm} --gpus {gpus} --dataset {dataset} "
-#                     f"--selection_method {selection_method} "
-#                     f"--budget {budget} --batch_size {batch_size}"
-#                     f" > logs/select/{dataset}/{selection_method}_{budget}_{lm}.log"
-#                 )
-#                 print(cmd)
-#                 os.system(cmd)
+for dataset in dataset_list:
+    for selection_method in [
+        "MFL",
+        "fast_votek",
+        "min_entropy",
+        "max_entropy",
+        "cbs_maxIG",
+        "votek",
+        "adaicl",
+        "our",
+    ][-1:]:
+        for budget in [6, 8, 10, 20, 30, 40, 50]:
+            if (
+                selection_method
+                in [
+                    "MFL",
+                    "fast_votek",
+                    "min_entropy",
+                    "max_entropy",
+                    "cbs_maxIG",
+                    "our",
+                ]
+                and budget < 50
+            ):
+                continue
+            for lm in ["llama2-7b", "llama2-13b", "llama2-70b"]:
+                if selection_method in ["MFL", "fast_votek"] and lm != "llama2-70b":
+                    continue
+                if os.path.exists(f"logs/select_{args.version}/{dataset}") is False:
+                    os.makedirs(f"logs/select_{args.version}/{dataset}")
+                cmd = (
+                    f"CUDA_VISIBLE_DEVICES={gpus} "
+                    f"python -u main.py --lm {lm} --gpus {gpus} --dataset {dataset} "
+                    f"--selection_method {selection_method} "
+                    f"--budget {budget} --batch_size {batch_size} "
+                    f"--version {args.version} --order o7 "
+                    f" >> logs/select_{args.version}/{dataset}/{selection_method}_{budget}_{lm}.log"
+                )
+                print(cmd)
+                os.system(cmd)
 
 
 for dataset in dataset_list:
