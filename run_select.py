@@ -65,7 +65,8 @@ for dataset in dataset_list:
         "votek",
         "adaicl",
         "our",
-    ][-1:]:
+        "our_base",
+    ][-2:-1]:
         for budget in [6, 8, 10, 20, 30, 40, 50]:
             if (
                 selection_method
@@ -76,6 +77,7 @@ for dataset in dataset_list:
                     "max_entropy",
                     "cbs_maxIG",
                     "our",
+                    "our_base",
                 ]
                 and budget < 50
             ):

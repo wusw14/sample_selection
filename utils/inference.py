@@ -3,6 +3,7 @@ from utils.llm import score_to_prob
 from transformers import StoppingCriteria, StoppingCriteriaList
 import torch
 from utils.llm import ask_chatgpt, ask_ada, get_api_cost, answer_to_pred
+import numpy as np
 
 
 class StoppingCriteriaSub(StoppingCriteria):
@@ -99,7 +100,7 @@ def inference(model_name, model, tokenizer, test_prompts, args):
                 )
                 scores = outputs["scores"][0].detach().cpu().numpy()
 
-                for score in scores:
+                for j, score in enumerate(scores):
                     pos_prob = score_to_prob(score, tokenizer)
                     ans_list.append(pos_prob)
                     pred_list.append(int(pos_prob > 0.5))

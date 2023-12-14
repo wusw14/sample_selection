@@ -5,11 +5,37 @@ import sys
 
 
 result_dir = f"results/results_{sys.argv[1]}"
-datasets = os.listdir(result_dir)
-for dataset in datasets:
+dataset_list = [
+    "AG",
+    "BR",
+    "DA",
+    "DS",
+    "FZ",
+    "IA",
+    "WA",
+    "AB",
+    "cameras",
+    "computers",
+    "shoes",
+    "watches",
+]
+
+dataset_dict = {
+    "AG": "Amazon-Google",
+    "BR": "BeerAdvo-RateBeer",
+    "DA": "DBLP-ACM",
+    "DS": "DBLP-Scholar",
+    "FZ": "Fodors-Zagats",
+    "IA": "iTunes-Amazon",
+    "WA": "Walmart-Amazon",
+    "AB": "Abt-Buy",
+}
+
+for dataset in dataset_list:
     f1_list = []
+    dataset = dataset_dict.get(dataset, dataset)
     for llm in ["llama2-7b", "llama2-13b", "llama2-70b"]:
-        for k in [6, 8, 10, 20]:
+        for k in [6, 8, 10]:
             filename = f"{result_dir}/{dataset}/our_{k}_{llm}.csv"
             if os.path.exists(filename) == False:
                 f1_list.append("--")

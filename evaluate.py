@@ -9,12 +9,16 @@ import argparse
 import numpy as np
 import pandas as pd
 import time
+from algorithm.our import reorder
+import torch
 
 import warnings
 from dotenv import load_dotenv
 
 load_dotenv()
 warnings.filterwarnings("ignore")
+
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
 
 def parse_args():
@@ -90,7 +94,7 @@ def load_selected_indices(args):
         input_file = os.path.join(data_dir, f"{args.selection_method}_{args.lm}.csv")
     df_selected = pd.read_csv(input_file)
     if args.selection_method in ["votek", "adaicl"]:
-        df_selected[df_selected.budget == args.budget]
+        df_selected = df_selected[df_selected.budget == args.budget]
         selected_indices = df_selected["index"].tolist()
     else:
         selected_indices = df_selected["index"].tolist()[: args.budget]
@@ -132,6 +136,17 @@ def initialization(args):
 
     example_inputs, example_labels, example_embeddings = load_in_context_examples(args)
     print(example_labels)
+    # model_name, model, tokenizer = init_model(args)
+    # example_inputs, example_labels, example_embeddings = reorder(
+    #     model_name,
+    #     model,
+    #     tokenizer,
+    #     example_inputs,
+    #     example_labels,
+    #     example_embeddings,
+    #     args,
+    # )
+
     test_entry_pairs, test_labels, test_embeddings = load_test(args)
     test_prompts = construct_prompt(
         example_inputs,
@@ -142,11 +157,14 @@ def initialization(args):
         args,
     )
     print(test_prompts[0])
+
     model_name, model, tokenizer = init_model(args)
+
     return model_name, model, tokenizer, test_prompts, test_labels
 
 
 if __name__ == "__main__":
+    torch.cuda.empty_cache()
     args = parse_args()
     output_file = f"results/results_{args.version}/{args.dataset}/{args.selection_method}_{args.budget}_{args.lm}.csv"
     if os.path.exists(output_file):

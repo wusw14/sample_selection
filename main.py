@@ -2,7 +2,7 @@ from algorithm.MFL import MFL
 from algorithm.votek import votek, fast_votek
 from algorithm.adaicl import adaicl
 from algorithm.entropy import max_entropy, min_entropy, cbs_maxIG
-from algorithm.our import our
+from algorithm.our import our, our_base, our_pairwise
 from utils.llm import init_model
 from utils.io import load_data
 import os
@@ -11,12 +11,15 @@ import argparse
 import numpy as np
 import pandas as pd
 import time
+import torch
 
 import warnings
 from dotenv import load_dotenv
 
 load_dotenv()
 warnings.filterwarnings("ignore")
+
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
 
 def parse_args():
@@ -46,6 +49,7 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--pos_num", type=int, default=3)
     parser.add_argument("--neg_num", type=int, default=3)
+    parser.add_argument("--p", type=float, default=1.0)
     args = parser.parse_args()
 
     dataset_dict = {
@@ -99,6 +103,7 @@ def initialization(args):
 
 
 if __name__ == "__main__":
+    torch.cuda.empty_cache()
     args = parse_args()
     print(f"PID {os.getpid()}\n\n")
     print(args, "\n\n")
@@ -132,6 +137,14 @@ if __name__ == "__main__":
         )
     elif args.selection_method == "our":
         selected_indices = our(
+            model_name, model, tokenizer, entry_pairs, labels, embeddings, args
+        )
+    elif args.selection_method == "our_base":
+        selected_indices = our_base(
+            model_name, model, tokenizer, entry_pairs, labels, embeddings, args
+        )
+    elif args.selection_method == "our_pairwise":
+        selected_indices = our_pairwise(
             model_name, model, tokenizer, entry_pairs, labels, embeddings, args
         )
     elif args.selection_method == "max_entropy":
