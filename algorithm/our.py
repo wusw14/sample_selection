@@ -783,7 +783,7 @@ def select_next(
     #     p_lower = np.clip(0.5 + abs(pos_neg_diff) / 10.0, 1e-9, 1 - 1e-9)
     # else:
     p_lower, p_upper = 0.5, np.clip(args.p, 1e-9, 1 - 1e-9)
-    p_upper2 = np.clip(args.p + 0.1, 1e-9, 1 - 1e-9)
+    p_upper2 = np.clip(1 - 1e-9, 1e-9, 1 - 1e-9)
     conf_upper = cal_conf(p_upper)
     conf_upper2 = cal_conf(p_upper2)
     conf_lower = cal_conf(p_lower)
@@ -827,9 +827,9 @@ def select_next(
         # index = uncertain_indices[index]
         sample_indices = np.where((conf < conf_upper2) * cond2)[0]
         if len(uncertain_indices) > 10:
-            uncertain_indices = sampling(uncertain_indices, probs)
+            uncertain_indices = sampling(historical_probs, uncertain_indices, probs)
         if len(sample_indices) > 10:
-            sample_indices = sampling(sample_indices, probs)
+            sample_indices = sampling(historical_probs, sample_indices, probs)
         print(f"uncertain_indices: {uncertain_indices}")
         print(f"sample_indices: {sample_indices}")
         index = max_info_gain(
@@ -850,17 +850,37 @@ def select_next(
     return index
 
 
-def sampling(indices, probs, n=10):
-    probs = probs[indices]
-    indices, probs = zip(*sorted(zip(indices, probs), key=lambda x: x[-1]))
-    start_idx = 0
-    interval = len(indices) // n
-    new_indices = []
-    while len(new_indices) < n:
-        interval = (len(indices) - start_idx) // (n - len(new_indices))
-        new_indices.append(indices[start_idx])
-        start_idx += interval
-    return new_indices
+def sampling(historical_probs, indices, probs, n=10):
+    # probs = probs[indices]
+    # indices, probs = zip(*sorted(zip(indices, probs), key=lambda x: x[-1]))
+    # start_idx = 0
+    # interval = len(indices) // n
+    # new_indices = []
+    # while len(new_indices) < n:
+    #     interval = (len(indices) - start_idx) // (n - len(new_indices))
+    #     new_indices.append(indices[start_idx])
+    #     start_idx += interval
+    reps = np.array(historical_probs).T
+    reps = reps[indices]
+    sim_matrix = distance_matrix(reps, reps, p=1)
+    sim_matrix = 1 - sim_matrix / np.max(sim_matrix)
+    similarity_to_labeled = np.array([-1] * len(indices))
+    selected_indices, scores = [], []
+    while len(selected_indices) < n:
+        max_score, idx = -1, -1
+        for i in range(len(indices)):
+            if i in selected_indices:
+                continue
+            value = sim_matrix[i] - similarity_to_labeled
+            score = np.sum(value[value > 0])
+            if score > max_score:
+                max_score = score
+                idx = i
+        selected_indices.append(idx)
+        similarity_to_labeled = np.maximum(similarity_to_labeled, sim_matrix[idx])
+        scores.append(max_score)
+    selected_indices = np.array(indices)[selected_indices]
+    return selected_indices
 
 
 def max_info_gain(
