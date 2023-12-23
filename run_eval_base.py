@@ -57,76 +57,71 @@ cnt, iter_num = 0, 0
 lm = args.lm
 batch_size = 1
 
-for dataset in dataset_list:
-    for selection_method in [
-        "MFL",
-        "fast_votek",
-        "min_entropy",
-        "max_entropy",
-        "cbs_maxIG",
-        "votek",
-        "adaicl",
-        "our",
-    ][-3:-1]:
-        for budget in [6, 8, 10, 20, 50]:
-            if (
-                selection_method
-                in [
-                    "MFL",
-                    "fast_votek",
-                    "min_entropy",
-                    "max_entropy",
-                    "cbs_maxIG",
-                    "our",
-                ]
-                and budget < 50
-            ):
-                continue
-            if selection_method in ["MFL", "fast_votek"] and lm != "llama2-70b":
-                continue
-            if os.path.exists(f"logs/select_{args.version}/{dataset}") is False:
-                os.makedirs(f"logs/select_{args.version}/{dataset}")
-            if os.path.exists(
-                f"logs/select_{args.version}/{dataset}/{selection_method}_{budget}_{lm}.log"
-            ):
-                continue
-            cmd = (
-                f"CUDA_VISIBLE_DEVICES={gpus} "
-                f"python -u main.py --lm {lm} --gpus {gpus} --dataset {dataset} "
-                f"--selection_method {selection_method} "
-                f"--budget {budget} --batch_size {batch_size} "
-                f"--version {args.version} --order o7 "
-                f" >> logs/select_{args.version}/{dataset}/{selection_method}_{budget}_{lm}.log"
-            )
-            print(cmd)
-            os.system(cmd)
-
+selection_method = "max_entropy_bl_sampling_wm"
 
 for dataset in dataset_list:
-    for selection_method in [
-        "MFL",
-        "fast_votek",
-        "min_entropy",
-        "max_entropy",
-        "cbs_maxIG",
-        "votek",
-        "adaicl",
-        "our",
-    ][-3:-1]:
-        for budget in [6, 8, 10, 20, 50]:
-            if os.path.exists(f"logs/inference_{args.version}/{dataset}") is False:
-                os.makedirs(f"logs/inference_{args.version}/{dataset}")
-            if os.path.exists(
-                f"logs/inference_{args.version}/{dataset}/{selection_method}_{budget}_{lm}.log"
-            ):
-                continue
-            cmd = (
-                f"CUDA_VISIBLE_DEVICES={gpus} "
-                f"python -u evaluate.py --lm {lm} --gpus {gpus} --dataset {dataset} "
-                f"--selection_method {selection_method} "
-                f"--budget {budget} --batch_size {batch_size} "
-                f"--version {args.version} --order o7"
-                f" > logs/inference_{args.version}/{dataset}/{selection_method}_{budget}_{lm}.log"
-            )
-            print(cmd)
-            os.system(cmd)
+    # for selection_method in [
+    #     "MFL",
+    #     "fast_votek",
+    #     "min_entropy",
+    #     "max_entropy",
+    #     "cbs_maxIG",
+    #     "votek",
+    #     "adaicl",
+    #     "our",
+    #     "max_entropy_bl",
+    #     "cosine_sim",
+    # ][-1:]:
+    for budget in [6, 8, 10, 20, 50, 100][-1:]:
+        if selection_method not in ["votek", "adaicl"] and budget < 50:
+            continue
+        if selection_method in ["MFL", "fast_votek"] and lm != "llama2-70b":
+            continue
+        if os.path.exists(f"logs/select_{args.version}/{dataset}") is False:
+            os.makedirs(f"logs/select_{args.version}/{dataset}")
+        if os.path.exists(
+            f"logs/select_{args.version}/{dataset}/{selection_method}_{budget}_{lm}.log"
+        ):
+            continue
+        cmd = (
+            f"CUDA_VISIBLE_DEVICES={gpus} "
+            f"python -u main.py --lm {lm} --gpus {gpus} --dataset {dataset} "
+            f"--selection_method {selection_method} "
+            f"--budget {budget} --batch_size {batch_size} "
+            f"--version {args.version} --order o7 "
+            f" >> logs/select_{args.version}/{dataset}/{selection_method}_{budget}_{lm}.log"
+        )
+        print(cmd)
+        os.system(cmd)
+
+
+# for dataset in dataset_list:
+#     # for selection_method in [
+#     #     "MFL",
+#     #     "fast_votek",
+#     #     "min_entropy",
+#     #     "max_entropy",
+#     #     "cbs_maxIG",
+#     #     "votek",
+#     #     "adaicl",
+#     #     "our",
+#     #     "max_entropy_bl",
+#     #     "cosine_sim",
+#     # ][-1:]:
+#     for budget in [6, 8, 10, 20, 50][:3]:
+#         if os.path.exists(f"logs/inference_{args.version}/{dataset}") is False:
+#             os.makedirs(f"logs/inference_{args.version}/{dataset}")
+#         if os.path.exists(
+#             f"logs/inference_{args.version}/{dataset}/{selection_method}_{budget}_{lm}.log"
+#         ):
+#             continue
+#         cmd = (
+#             f"CUDA_VISIBLE_DEVICES={gpus} "
+#             f"python -u evaluate.py --lm {lm} --gpus {gpus} --dataset {dataset} "
+#             f"--selection_method {selection_method} "
+#             f"--budget {budget} --batch_size {batch_size} "
+#             f"--version {args.version} --order o7"
+#             f" > logs/inference_{args.version}/{dataset}/{selection_method}_{budget}_{lm}.log"
+#         )
+#         print(cmd)
+#         os.system(cmd)

@@ -166,6 +166,8 @@ def initialization(args):
 if __name__ == "__main__":
     torch.cuda.empty_cache()
     args = parse_args()
+    if args.budget > 10:
+        exit()
     output_file = f"results/results_{args.version}/{args.dataset}/{args.selection_method}_{args.budget}_{args.lm}.csv"
     if os.path.exists(output_file):
         print("File exists")

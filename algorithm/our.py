@@ -156,7 +156,7 @@ def cal_cosine_sim(args):
     return cosine_sim
 
 
-def stratified_sampling(inputs, labels, embeddings, cosine_of_each_pair, args):
+def stratified_sampling2(inputs, labels, embeddings, cosine_of_each_pair, args):
     budget = 100
     # budget = int(max(100, np.ceil(len(labels) / (args.k * (args.k + 1) / 2.0))))
     # budget = int(max(100, np.ceil(len(labels) / args.k)))
@@ -206,29 +206,65 @@ def stratified_sampling(inputs, labels, embeddings, cosine_of_each_pair, args):
     return sample_inputs, sample_labels, sample_embeddings, sample_indices, scores
 
 
-def MFL(prob_reps, uncertain_indices, selected_indices, flag="pos"):
+def stratified_sampling(inputs, labels, embeddings, cosine_of_each_pair, args):
+    budget = 100
+    # budget = int(max(100, np.ceil(len(labels) / (args.k * (args.k + 1) / 2.0))))
+    # budget = int(max(100, np.ceil(len(labels) / args.k)))
+    # by cosine similarity and null values distribution
+    df = pd.DataFrame({"id": list(range(len(inputs))), "score": cosine_of_each_pair})
+    df["group"] = pd.cut(df["score"], bins=budget, labels=list(range(budget)))
+    group_id, _ = zip(
+        *sorted(
+            df.groupby(["group"]).size().reset_index().values,
+            key=lambda x: x[-1],
+        )
+    )
+    group_num = len(group_id)
+    sample_indices = []
+    for i in range(group_num):
+        df_sub = df[df.group == i]
+        if len(df_sub) == 0:
+            continue
+        n = (budget - len(sample_indices)) // (group_num - i)
+        if n >= len(df_sub):
+            sample_indices += df_sub["id"].tolist()
+        else:
+            sample_indices += df_sub.sample(n=n, random_state=args.seed)["id"].tolist()
+    sample_inputs = [inputs[idx] for idx in sample_indices]
+    sample_labels = [labels[idx] for idx in sample_indices]
+    sample_embeddings = [embeddings[idx] for idx in sample_indices]
+    scores = [cosine_of_each_pair[idx] for idx in sample_indices]
+    print(
+        f"pos/neg in candidates: {sum(sample_labels)}/{len(sample_labels)-sum(sample_labels)}"
+    )
+    return sample_inputs, sample_labels, sample_embeddings, sample_indices, scores
+
+
+def MFL(selected_reps, candidate_reps, sample_reps):
+    dist_selected = distance_matrix(selected_reps, sample_reps, p=1)
+    dist_min_cur = np.min(dist_selected, axis=0)  # [N]
+    dist_candidate = distance_matrix(candidate_reps, sample_reps, p=1)
+    improvement = dist_min_cur[None,] - dist_candidate  # [K2, N]
+    improvement = np.clip(improvement, 0, None)
+    improvement = np.sum(improvement, axis=1)  # [N]
+    return np.argmax(improvement)
+
+
+def centroid(prob_reps, uncertain_indices, selected_indices, flag="pos"):
     probs = prob_reps[:, -1]
+    probs[selected_indices] = 2
     if flag == "pos":
-        sub_reps = prob_reps[probs > 0.5]
+        sub_reps = prob_reps[(probs > 0.5) & (probs < 2)]
     elif flag == "neg":
         sub_reps = prob_reps[probs <= 0.5]
     else:
-        sub_reps = prob_reps
-    # calculate distance between selected indices and all the samples
-    dist_selected = distance_matrix(
-        prob_reps[selected_indices], sub_reps, p=1
-    )  # [K, N]
-    dist_min_cur = np.min(dist_selected, axis=0)  # [N]
+        sub_reps = prob_reps[probs < 2]
     # calculate the distance between the uncertain indices and all the samples
     dist_uncertain = distance_matrix(
-        prob_reps[uncertain_indices], sub_reps, p=1
+        prob_reps[uncertain_indices], prob_reps[uncertain_indices], p=1
     )  # [K2, N]
-    # calculate the improvement
-    improvement = dist_min_cur[None,] - dist_uncertain  # [K2, N]
-    improvement = np.clip(improvement, 0, None)
-    improvement = np.sum(improvement, axis=1)  # [N]
-    print(improvement)
-    idx = np.argmax(improvement)
+    dist_uncertain = np.sum(dist_uncertain, axis=1)  # [N]
+    idx = np.argmin(dist_uncertain)
     return uncertain_indices[idx]
 
 
@@ -539,6 +575,7 @@ def our_pairwise(model_name, model, tokenizer, inputs, labels, embeddings, args)
     historical_confs, historical_probs = [], []
 
     while len(selected_indices) < min(args.k, args.budget):
+        pos_neg_diff = 2 * np.sum(example_labels) - len(example_labels)
         print(f"****************")
         print(f"iteration {len(selected_indices) + 1}")
         prompts = construct_prompt(
@@ -547,7 +584,101 @@ def our_pairwise(model_name, model, tokenizer, inputs, labels, embeddings, args)
         print(prompts[0])
         print("---------------\n\n")
         _, probs = inference(model_name, model, tokenizer, prompts, args)
-        precision, recall, f1 = evaluate(labels, np.array(probs) > 0.5)
+
+        # calculate unselcted pairs
+        unselected_indices = list(set(range(len(labels))) - set(selected_indices))
+        unselected_probs = np.array(probs)[unselected_indices]
+        unselected_labels = np.array(labels.copy())[unselected_indices]
+        precision, recall, f1 = evaluate(unselected_labels, unselected_probs > 0.5)
+        print(f"Precision {precision:.2f} Recall {recall:.2f} F1 {f1:.2f}")
+
+        probs = np.array(probs)
+        probs = np.clip(probs, 1e-6, 1 - 1e-6)
+        historical_probs.append(probs)  # [T, N]
+        reps = np.array(historical_probs).T  # [N, T]
+        conf = 1 + (probs * np.log(probs) + (1 - probs) * np.log(1 - probs)) / scaler
+        conf[selected_indices] = 2
+        historical_confs.append(conf)
+
+        if pos_neg_diff < 0:
+            next = "pos"
+        elif pos_neg_diff > 0:
+            next = "neg"
+        else:
+            low_conf_pos_num = np.sum((conf < certain_thr) * (probs > 0.5))
+            low_conf_neg_num = np.sum((conf < certain_thr) * (probs <= 0.5))
+            if low_conf_pos_num >= low_conf_neg_num:
+                next = "pos"
+            else:
+                next = "neg"
+
+        idx = select_next(
+            historical_probs,
+            historical_confs,
+            selected_indices,
+            pos_neg_diff,
+            conf,
+            args,
+            next=next,
+        )
+        selected_indices.append(idx)
+        example_inputs.append(inputs[idx])
+        example_labels.append(labels[idx])
+        example_embeddings.append(embeddings[idx])
+        print(f"index: {idx}, label: {labels[idx]}, pred: {probs[idx]:.2f}")
+
+        probs_output = [f"{v:.4f}" for v in probs]
+        result = [v for v in zip(range(len(labels)), labels, probs_output)]
+        print(result)
+        print(f"****************\n\n")
+        print("selected indices:", selected_indices)
+        print("labels of selected:", example_labels)
+
+    while len(selected_indices) < args.budget:
+        break
+        # TODO
+    selected_indices = [candidate_indices[idx] for idx in selected_indices]
+    return selected_indices
+
+
+def our_progressive(model_name, model, tokenizer, inputs, labels, embeddings, args):
+    # sample by cosine similarity
+    cosine_of_each_pair = cal_cosine_sim(args)
+    inputs, labels, embeddings, candidate_indices, scores = stratified_sampling(
+        inputs, labels, embeddings, cosine_of_each_pair, args
+    )
+    print(f"candidates: {len(inputs)}")
+
+    # warm up with the sample with the highest and lowest cosine similarity score
+    example_inputs, example_labels, example_embeddings = [], [], []
+    selected_indices = [np.argmax(scores), np.argmin(scores)]
+    for idx in selected_indices:
+        example_inputs.append(inputs[idx])
+        example_labels.append(labels[idx])
+        example_embeddings.append(embeddings[idx])
+
+    # iterative sampling by confidence
+    # conf_decay = 25
+    scaler = -np.log(0.5)
+    p = np.clip(args.p, 1e-9, 1 - 1e-9)
+    certain_thr = 1 + (p * np.log(p) + (1 - p) * np.log(1 - p)) / scaler
+    historical_confs, historical_probs = [], []
+
+    pos_thr, neg_thr = 0.9, 0.1
+    while len(selected_indices) < min(args.k, args.budget):
+        print(f"****************")
+        print(f"iteration {len(selected_indices) + 1}")
+        prompts = construct_prompt(
+            example_inputs, example_labels, example_embeddings, inputs, embeddings, args
+        )
+        print(prompts[0])
+        print("---------------\n\n")
+        _, probs = inference(model_name, model, tokenizer, prompts, args)
+        # calculate unselcted pairs
+        unselected_indices = list(set(range(len(labels))) - set(selected_indices))
+        unselected_probs = np.array(probs)[unselected_indices]
+        unselected_labels = np.array(labels.copy())[unselected_indices]
+        precision, recall, f1 = evaluate(unselected_labels, unselected_probs > 0.5)
         print(f"Precision {precision:.2f} Recall {recall:.2f} F1 {f1:.2f}")
         probs = np.array(probs)
         probs = np.clip(probs, 1e-6, 1 - 1e-6)
@@ -556,60 +687,364 @@ def our_pairwise(model_name, model, tokenizer, inputs, labels, embeddings, args)
         conf = 1 + (probs * np.log(probs) + (1 - probs) * np.log(1 - probs)) / scaler
         conf[selected_indices] = 2
 
-        cond1 = (conf < certain_thr) * (probs > 0.5)  # potential pos with low conf
-        cond11 = (conf < 1) * (probs > 0.5)  # potential pos
-        if np.sum(cond1) > 0:
-            uncertain_indices = np.where(cond1)[0]  # not confident
-            selected_potential_pos = MFL(
-                reps, uncertain_indices, selected_indices, flag="pos"
+        selected_cur1, selected_cur2 = None, None
+        while True:
+            cond1 = (conf < 2) * (probs > pos_thr)  # potential pos with low conf
+            if np.sum(cond1) > 0:
+                conf_temp = conf.copy()
+                conf_temp[cond1 == False] = 2
+                selected_cur1 = np.argmin(conf_temp)
+                flag = f"select the least conf pos with pred > {pos_thr:.2f}"
+            else:
+                probs_temp = probs.copy()
+                probs_temp[selected_indices] = 0
+                selected_cur1 = np.argmax(probs_temp)
+                flag = "select the most likely pos"
+            print(
+                f"flag = {flag}, selected_potential_pos = {selected_cur1}, "
+                f"label = {labels[selected_cur1]}, "
+                f"pred = {probs[selected_cur1]:.2f}"
             )
-            flag = "select representative low-conf potential pos"
-        elif np.sum(cond11) > 0:
-            conf_temp = conf.copy()
-            conf_temp[probs <= 0.5] = 1 + conf_temp[probs <= 0.5]
-            selected_potential_pos = np.argmin(conf_temp)
-            flag = "no low-conf potential pos, select from least conf"
-        else:
-            selected_potential_pos = np.argmin(conf)
-            flag = "no potential pos, select from least conf"
-        print(
-            f"flag = {flag}, selected_potential_pos = {selected_potential_pos}, "
-            f"label = {labels[selected_potential_pos]}, "
-            f"pred = {probs[selected_potential_pos]:.2f}"
-        )
-        conf[selected_potential_pos] = 2
+            conf[selected_cur1] = 2
+            if labels[selected_cur1] == 1:
+                pos_thr = max(pos_thr - 0.1, 0.5)
+                break
+            elif selected_cur2 is None:
+                selected_cur2 = selected_cur1.copy()
+            else:
+                break
 
-        cond2 = (conf < certain_thr) * (probs <= 0.5)  # potential neg with low conf
-        cond21 = (conf < 1) * (probs <= 0.5)  # potential neg
-        if np.sum(cond2) > 0:
-            uncertain_indices = np.where(cond2)[0]
-            selected_potential_neg = MFL(
-                reps, uncertain_indices, selected_indices, flag="neg"
+        if selected_cur2 is None:
+            cond2 = (conf < 2) * (probs < neg_thr)
+            if np.sum(cond2) > 0:
+                conf_temp = conf.copy()
+                conf_temp[cond2 == False] = 2
+                selected_cur2 = np.argmin(conf_temp)
+                flag = f"select the least conf neg with pred < {neg_thr:.2f}"
+            else:
+                probs_temp = probs.copy()
+                probs_temp[selected_indices] = 1
+                selected_cur2 = np.argmin(probs_temp)
+                flag = "select the most likely neg"
+            print(
+                f"flag = {flag}, selected_potential_neg = {selected_cur2}, "
+                f"label = {labels[selected_cur2]}, "
+                f"pred = {probs[selected_cur2]:.2f}"
             )
-            flag = "select representative low-conf potential neg"
-        elif np.sum(cond21) > 0:
-            conf_temp = conf.copy()
-            conf_temp[probs > 0.5] = 1 + conf_temp[probs > 0.5]
-            selected_potential_neg = np.argmin(conf_temp)
-            flag = "no low-conf potential neg, select from least conf"
-        else:
-            selected_potential_neg = np.argmin(conf)
-            flag = "no potential neg, select from least conf"
-        print(
-            f"flag = {flag}, selected_potential_neg = {selected_potential_neg}, "
-            f"label = {labels[selected_potential_neg]}, "
-            f"pred = {probs[selected_potential_neg]:.2f}"
-        )
+            conf[selected_cur2] = 2
+            if labels[selected_cur2] == 0:
+                neg_thr = min(neg_thr + 0.1, 0.5)
 
         probs_output = [f"{v:.4f}" for v in probs]
         result = [v for v in zip(range(len(labels)), labels, probs_output)]
         print(result)
         print(f"****************\n\n")
-        for idx in [selected_potential_pos, selected_potential_neg]:
+        print("selected indices:", selected_indices)
+        print("labels of selected:", example_labels)
+        if np.random.rand() < 0.5:
+            cur_selected_indices = [selected_cur1, selected_cur2]
+        else:
+            cur_selected_indices = [selected_cur2, selected_cur1]
+        for idx in cur_selected_indices:
             selected_indices.append(idx)
             example_inputs.append(inputs[idx])
             example_labels.append(labels[idx])
             example_embeddings.append(embeddings[idx])
+
+    while len(selected_indices) < args.budget:
+        break
+        # TODO
+    selected_indices = [candidate_indices[idx] for idx in selected_indices]
+    return selected_indices
+
+
+def cal_conf(p):
+    scaler = -np.log(0.5)
+    return 1 + (p * np.log(p) + (1 - p) * np.log(1 - p)) / scaler
+
+
+def select_next(
+    model_name,
+    model,
+    tokenizer,
+    inputs,
+    labels,
+    embeddings,
+    historical_probs,
+    historical_confs,
+    selected_indices,
+    pos_neg_diff,
+    conf,
+    args,
+    next="pos",
+):
+    # if next == "pos" and pos_neg_diff < -1 or next == "neg" and pos_neg_diff > 1:
+    #     p_upper = np.clip(args.p + abs(pos_neg_diff) / 10.0, 1e-9, 1 - 1e-9)
+    #     p_lower = np.clip(0.5 + abs(pos_neg_diff) / 10.0, 1e-9, 1 - 1e-9)
+    # else:
+    p_lower, p_upper = 0.5, np.clip(args.p, 1e-9, 1 - 1e-9)
+    p_upper2 = np.clip(args.p + 0.1, 1e-9, 1 - 1e-9)
+    conf_upper = cal_conf(p_upper)
+    conf_upper2 = cal_conf(p_upper2)
+    conf_lower = cal_conf(p_lower)
+    cond1 = (conf < conf_upper) & (conf > conf_lower)
+    cond1_up = (conf > conf_upper) & (conf < 2)
+    cond1_lw = (conf < conf_lower) & (conf >= 0)
+
+    probs = np.array(historical_probs[-1])
+    if next == "pos":
+        cond2 = probs > 0.5
+    else:
+        cond2 = probs <= 0.5
+
+    if np.sum(cond1 * cond2) > 0:
+        uncertain_indices = np.where(cond1 * cond2)[0]
+        flag = f"select from potential {next} within the conf range"
+    elif np.sum(cond1_up * cond2) > 0:
+        conf_temp = conf.copy()
+        conf_temp[(cond1_up * cond2) == False] = 2
+        uncertain_indices = [np.argmin(conf_temp)]
+        flag = f"select from least conf potential {next} above the conf range"
+    elif np.sum(cond1_lw * cond2) > 0:
+        conf_temp = conf.copy()
+        conf_temp[(cond1_lw * cond2) == False] = -1
+        uncertain_indices = [np.argmax(conf_temp)]
+        flag = f"select from most conf potential {next} below the conf range"
+    else:
+        uncertain_indices = [np.argmin(conf)]
+        flag = f"no candidate, select from most likely potential {next}"
+
+    if len(uncertain_indices) == 1:
+        index = uncertain_indices[0]
+    elif len(uncertain_indices) == 2:
+        index = uncertain_indices[np.argmax(conf[uncertain_indices])]
+    else:
+        # reps = np.array(historical_probs).T
+        # selected_reps = reps[selected_indices]
+        # candidate_reps = reps[uncertain_indices]
+        # sample_reps = reps[(conf > conf_lower) * (cond2)]
+        # index = MFL(selected_reps, candidate_reps, sample_reps)
+        # index = uncertain_indices[index]
+        sample_indices = np.where((conf < conf_upper2) * cond2)[0]
+        if len(uncertain_indices) > 10:
+            uncertain_indices = sampling(uncertain_indices, probs)
+        if len(sample_indices) > 10:
+            sample_indices = sampling(sample_indices, probs)
+        print(f"uncertain_indices: {uncertain_indices}")
+        print(f"sample_indices: {sample_indices}")
+        index = max_info_gain(
+            model_name,
+            model,
+            tokenizer,
+            inputs,
+            labels,
+            embeddings,
+            selected_indices,
+            uncertain_indices,
+            sample_indices,
+            probs,
+            args,
+            next,
+        )
+    print(f"flag = {flag}, selected_index = {index}")
+    return index
+
+
+def sampling(indices, probs, n=10):
+    probs = probs[indices]
+    indices, probs = zip(*sorted(zip(indices, probs), key=lambda x: x[-1]))
+    start_idx = 0
+    interval = len(indices) // n
+    new_indices = []
+    while len(new_indices) < n:
+        interval = (len(indices) - start_idx) // (n - len(new_indices))
+        new_indices.append(indices[start_idx])
+        start_idx += interval
+    return new_indices
+
+
+def max_info_gain(
+    model_name,
+    model,
+    tokenizer,
+    inputs,
+    labels,
+    embeddings,
+    selected_indices,
+    uncertain_indices,
+    sample_indices,
+    probs,
+    args,
+    next,
+):
+    example_inputs, example_labels, example_embeddings = [], [], []
+    for idx in selected_indices:
+        example_inputs.append(inputs[idx])
+        example_labels.append(labels[idx])
+        example_embeddings.append(embeddings[idx])
+    sample_inputs, sample_embeddings = [], []
+    for idx in sample_indices:
+        sample_inputs.append(inputs[idx])
+        sample_embeddings.append(embeddings[idx])
+    # calculate information gain of each uncertain sample
+    info_gain = []
+    print(f"uncertain_indices: {uncertain_indices}")
+    for idx in uncertain_indices:
+        example_inputs.append(inputs[idx])
+        example_labels.append(labels[idx])
+        example_embeddings.append(embeddings[idx])
+        prompts = construct_prompt(
+            example_inputs,
+            example_labels,
+            example_embeddings,
+            sample_inputs,
+            sample_embeddings,
+            args,
+        )
+        _, probs_temp = inference(model_name, model, tokenizer, prompts, args)
+        probs_temp = np.array(probs_temp)
+        conf_temp = np.maximum(probs_temp, 1 - probs_temp)
+        conf_org = np.maximum(probs, 1 - probs)
+        conf_diff = conf_temp - conf_org[sample_indices]
+        if idx in sample_indices:
+            sample_idx = list(sample_indices).index(idx)
+            conf_diff[sample_idx] = 0
+            improvement = np.sum(conf_diff) / (len(sample_indices) - 1)
+        else:
+            improvement = np.sum(conf_diff) / len(sample_indices)
+        info_gain.append(improvement)
+        print(
+            f"newly added index: {idx}, predicted_prob: {probs[idx]}, "
+            f"label: {labels[idx]}, info_gain: {info_gain[-1]}"
+        )
+        del example_inputs[-1]
+        del example_labels[-1]
+        del example_embeddings[-1]
+    return uncertain_indices[np.argmax(info_gain)]
+
+
+def select_by_cosine_sim(
+    model_name, model, tokenizer, inputs, labels, embeddings, args
+):
+    # sample by cosine similarity
+    cosine_of_each_pair = cal_cosine_sim(args)
+    inputs, labels, embeddings, candidate_indices, scores = stratified_sampling(
+        inputs, labels, embeddings, cosine_of_each_pair, args
+    )
+    print(f"candidates: {len(inputs)}")
+    labels, candidate_indices, scores = zip(
+        *sorted(zip(labels, candidate_indices, scores), key=lambda x: x[-1])
+    )
+    left_index, right_index = 0, len(candidate_indices) - 1
+    target = "pos"
+    selected_indices = []
+    while len(selected_indices) < args.budget:
+        if target == "pos":
+            index = right_index
+            right_index -= 1
+            if labels[index] == 1:
+                target = "neg"
+        else:
+            index = left_index
+            left_index += 1
+            if labels[index] == 0:
+                target = "pos"
+        selected_indices.append(candidate_indices[index])
+    return selected_indices
+
+
+def ideal(model_name, model, tokenizer, inputs, labels, embeddings, args):
+    # sample by cosine similarity
+    cosine_of_each_pair = cal_cosine_sim(args)
+    inputs, labels, embeddings, candidate_indices, scores = stratified_sampling(
+        inputs, labels, embeddings, cosine_of_each_pair, args
+    )
+    print(f"candidates: {len(inputs)}")
+    # warm up with the sample with the highest and lowest cosine similarity score
+    example_inputs, example_labels, example_embeddings = [], [], []
+    selected_indices = [np.argmax(scores), np.argmin(scores)]
+    for idx in selected_indices:
+        example_inputs.append(inputs[idx])
+        example_labels.append(labels[idx])
+        example_embeddings.append(embeddings[idx])
+
+    # iterative sampling by confidence
+    # conf_decay = 25
+    scaler = -np.log(0.5)
+    p = np.clip(args.p, 1e-9, 1 - 1e-9)
+    certain_thr = 1 + (p * np.log(p) + (1 - p) * np.log(1 - p)) / scaler
+    historical_confs, historical_probs = [], []
+
+    while len(selected_indices) < min(args.k, args.budget):
+        pos_neg_diff = 2 * np.sum(example_labels) - len(example_labels)
+        print(f"****************")
+        print(f"iteration {len(selected_indices) + 1}")
+        prompts = construct_prompt(
+            example_inputs, example_labels, example_embeddings, inputs, embeddings, args
+        )
+        print(prompts[0])
+        print("---------------\n\n")
+        _, probs = inference(model_name, model, tokenizer, prompts, args)
+
+        # calculate unselcted pairs
+        unselected_indices = list(set(range(len(labels))) - set(selected_indices))
+        unselected_probs = np.array(probs)[unselected_indices]
+        unselected_labels = np.array(labels.copy())[unselected_indices]
+        precision, recall, f1 = evaluate(unselected_labels, unselected_probs > 0.5)
+        print(f"Precision {precision:.2f} Recall {recall:.2f} F1 {f1:.2f}")
+
+        probs = np.array(probs)
+        probs = np.clip(probs, 1e-6, 1 - 1e-6)
+        historical_probs.append(probs)  # [T, N]
+        reps = np.array(historical_probs).T  # [N, T]
+        conf = 1 + (probs * np.log(probs) + (1 - probs) * np.log(1 - probs)) / scaler
+        conf[selected_indices] = 2
+        historical_confs.append(conf)
+
+        if pos_neg_diff < 0:
+            next = "pos"
+        elif pos_neg_diff > 0:
+            next = "neg"
+        else:
+            if np.sum((conf < 2) * (probs > 0.5)) == 0:
+                next = "pos"
+            elif np.sum((conf < 2) * (probs <= 0.5)) == 0:
+                next = "neg"
+            else:
+                low_conf_pos_num = np.sum((conf < certain_thr) * (probs > 0.5))
+                low_conf_neg_num = np.sum((conf < certain_thr) * (probs <= 0.5))
+                if low_conf_pos_num >= low_conf_neg_num:
+                    next = "pos"
+                else:
+                    next = "neg"
+
+        idx = select_next(
+            model_name,
+            model,
+            tokenizer,
+            inputs,
+            labels,
+            embeddings,
+            historical_probs,
+            historical_confs,
+            selected_indices,
+            pos_neg_diff,
+            conf,
+            args,
+            next=next,
+        )
+        selected_indices.append(idx)
+        example_inputs.append(inputs[idx])
+        example_labels.append(labels[idx])
+        example_embeddings.append(embeddings[idx])
+        print(f"index: {idx}, label: {labels[idx]}, pred: {probs[idx]:.2f}")
+
+        probs_output = [f"{v:.4f}" for v in probs]
+        result = [v for v in zip(range(len(labels)), labels, probs_output)]
+        print(result)
+        print(f"****************\n\n")
+        print("selected indices:", selected_indices)
+        print("labels of selected:", example_labels)
 
     while len(selected_indices) < args.budget:
         break

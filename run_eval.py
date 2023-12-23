@@ -43,7 +43,7 @@ cnt, iter_num = 0, 0
 #     handle = pynvml.nvmlDeviceGetHandleByIndex(int(gpus.split(",")[0]))
 #     memoryInfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
 #     memory = memoryInfo.used / memoryInfo.total
-#     if memory > 0.05:
+#     if memory > 0.5:
 #         cnt = 0
 #         time.sleep(300)
 #         iter_num += 1
@@ -53,13 +53,13 @@ cnt, iter_num = 0, 0
 #         time.sleep(np.random.randint(10, 20))
 #     if iter_num % 12 == 0:
 #         print(f"{iter_num//12} hours passed")
-#     if cnt > 30:
+#     if cnt > 10:
 #         break
 
 batch_size = 1
 
-for p in [0.6, 0.7, 0.8]:
-    args.version = f"our_p{int(p * 100)}_order"
+for p in [0.7, 0.8, 0.9, 1.0][::-1]:
+    args.version = f"ideal_p{int(p * 100)}"
     for dataset in dataset_list:
         for selection_method in [
             "MFL",
@@ -71,20 +71,11 @@ for p in [0.6, 0.7, 0.8]:
             "adaicl",
             "our",
             "our_pairwise",
+            "our_progressive",
+            "ideal",
         ][-1:]:
             for budget in [6, 8, 10, 20, 30, 40, 50]:
-                if (
-                    selection_method
-                    in [
-                        "MFL",
-                        "fast_votek",
-                        "min_entropy",
-                        "max_entropy",
-                        "cbs_maxIG",
-                        "our",
-                    ]
-                    and budget < 50
-                ):
+                if selection_method not in ["votek", "adaicl"] and budget < 50:
                     continue
                 for lm in ["llama2-7b", "llama2-13b", "llama2-70b"]:
                     if lm != args.lm:
@@ -121,6 +112,8 @@ for p in [0.6, 0.7, 0.8]:
             "adaicl",
             "our",
             "our_pairwise",
+            "our_progressive",
+            "ideal",
         ][-1:]:
             for budget in [6, 8, 10]:
                 for lm in ["llama2-7b", "llama2-13b", "llama2-70b"]:

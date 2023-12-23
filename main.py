@@ -1,8 +1,15 @@
 from algorithm.MFL import MFL
 from algorithm.votek import votek, fast_votek
 from algorithm.adaicl import adaicl
-from algorithm.entropy import max_entropy, min_entropy, cbs_maxIG
-from algorithm.our import our, our_base, our_pairwise
+from algorithm.entropy import max_entropy, min_entropy, cbs_maxIG, max_entropy_bl
+from algorithm.our import (
+    our,
+    our_base,
+    our_pairwise,
+    our_progressive,
+    select_by_cosine_sim,
+    ideal,
+)
 from utils.llm import init_model
 from utils.io import load_data
 import os
@@ -95,7 +102,7 @@ def initialization(args):
     embeddings = np.loadtxt(os.path.join(data_dir, "train_pair_emb.npy"))
     assert len(train_entry_pairs) == len(embeddings)
 
-    if args.selection_method in ["MFL", "fast_votek"]:
+    if args.selection_method in ["MFL", "fast_votek", "cosine_sim"]:
         model_name, model, tokenizer = None, None, None
     else:
         model_name, model, tokenizer = init_model(args)
@@ -147,8 +154,24 @@ if __name__ == "__main__":
         selected_indices = our_pairwise(
             model_name, model, tokenizer, entry_pairs, labels, embeddings, args
         )
+    elif args.selection_method == "our_progressive":
+        selected_indices = our_progressive(
+            model_name, model, tokenizer, entry_pairs, labels, embeddings, args
+        )
+    elif args.selection_method == "cosine_sim":
+        selected_indices = select_by_cosine_sim(
+            model_name, model, tokenizer, entry_pairs, labels, embeddings, args
+        )
+    elif args.selection_method == "ideal":
+        selected_indices = ideal(
+            model_name, model, tokenizer, entry_pairs, labels, embeddings, args
+        )
     elif args.selection_method == "max_entropy":
         selected_indices = max_entropy(
+            model_name, model, tokenizer, entry_pairs, labels, embeddings, args
+        )
+    elif "max_entropy_bl" in args.selection_method:
+        selected_indices = max_entropy_bl(
             model_name, model, tokenizer, entry_pairs, labels, embeddings, args
         )
     elif args.selection_method == "min_entropy":
