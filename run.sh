@@ -10,7 +10,7 @@
 # python preprocess.py --dataset shoes > logs/emb/shoes.log
 # python preprocess.py --dataset computers > logs/emb/computers.log
 
-# nohup python -u run_eval.py 2,3 --dataset FZ AG WA  > logs/01.log 2>&1 &
+# nohup python -u run_eval.py 2,3 --dataset FZ AG WA > logs/01.log 2>&1 &
 
 # nohup python -u run_eval.py 2,3 --dataset WA DA AG DS > logs/23.log 2>&1 &
 # nohup python -u run_eval.py 0,1 --dataset BR IA FZ watches cameras shoes computers AB > logs/01.log 2>&1 &
@@ -22,12 +22,19 @@
 
 # nohup python -u run_eval.py 4,5 --dataset WA > logs/45.log 2>&1 &
 
-# nohup python -u run_select.py 6,7 --dataset FZ BR IA AG DS > logs/67.log 2>&1 &
-# nohup python -u run_select.py 0,1,2,3,4,5 --dataset WA AB DA watches cameras shoes computers > logs/67.log 2>&1 &
+# nohup python -u run_eval.py 6,7 llama2-70b --dataset BR FZ IA AG watches WA AB DA DS cameras shoes computers --version ideal > logs/67.log 2>&1 &
+# nohup python -u run_select.py 0,1,2,3,4,5 --dataset > logs/67.log 2>&1 &
+nohup python -u run_eval.py 0 llama2-7b --dataset BR FZ IA AG watches WA AB DA DS cameras shoes computers --version ideal > logs/0.log 2>&1 &
+nohup python -u run_eval.py 1 llama2-7b --dataset BR FZ IA AG watches WA AB DA DS cameras shoes computers --version ideal > logs/1.log 2>&1 &
+nohup python -u run_eval.py 0 llama2-13b --dataset BR FZ IA AG watches WA AB DA DS cameras shoes computers --version ideal > logs/00.log 2>&1 &
+nohup python -u run_eval.py 1 llama2-13b --dataset BR FZ IA AG watches WA AB DA DS cameras shoes computers --version ideal > logs/11.log 2>&1 &
+nohup python -u run_eval.py 2,3 llama2-70b --dataset BR FZ IA AG watches WA AB DA DS cameras shoes computers --version ideal > logs/23.log 2>&1 &
+nohup python -u run_eval.py 4,5 llama2-70b --dataset BR FZ IA AG watches WA AB DA DS cameras shoes computers --version ideal > logs/45.log 2>&1 &
+nohup python -u run_eval.py 6,7 llama2-70b --dataset BR FZ IA AG watches WA AB DA DS cameras shoes computers --version ideal > logs/67.log 2>&1 &
 
 # nohup python -u run_select.py 4,5 --dataset DA watches cameras shoes computers > logs/67.log 2>&1 &
 
-# nohup python -u run_select.py 4,5 --dataset  > logs/45.log 2>&1 &
+# nohup python -u run_select.py 4,5 --dataset > logs/45.log 2>&1 &
 
 
 

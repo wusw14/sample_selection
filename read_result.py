@@ -3,7 +3,7 @@ import pandas as pd
 from utils.misc import evaluate
 import sys
 
-method = "max_entropy_bl_sampling_wm"
+method = "ideal"
 result_dir = f"results/results_{sys.argv[1]}"
 dataset_list = [
     "AG",

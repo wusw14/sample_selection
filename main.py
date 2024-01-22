@@ -3,10 +3,6 @@ from algorithm.votek import votek, fast_votek
 from algorithm.adaicl import adaicl
 from algorithm.entropy import max_entropy, min_entropy, cbs_maxIG, max_entropy_bl
 from algorithm.our import (
-    our,
-    our_base,
-    our_pairwise,
-    our_progressive,
     select_by_cosine_sim,
     ideal,
 )
@@ -57,6 +53,7 @@ def parse_args():
     parser.add_argument("--pos_num", type=int, default=3)
     parser.add_argument("--neg_num", type=int, default=3)
     parser.add_argument("--p", type=float, default=1.0)
+    parser.add_argument("--beam_size", type=int, default=3)
     args = parser.parse_args()
 
     dataset_dict = {
@@ -140,22 +137,6 @@ if __name__ == "__main__":
         )
     elif args.selection_method == "adaicl":
         selected_indices = adaicl(
-            model_name, model, tokenizer, entry_pairs, labels, embeddings, args
-        )
-    elif args.selection_method == "our":
-        selected_indices = our(
-            model_name, model, tokenizer, entry_pairs, labels, embeddings, args
-        )
-    elif args.selection_method == "our_base":
-        selected_indices = our_base(
-            model_name, model, tokenizer, entry_pairs, labels, embeddings, args
-        )
-    elif args.selection_method == "our_pairwise":
-        selected_indices = our_pairwise(
-            model_name, model, tokenizer, entry_pairs, labels, embeddings, args
-        )
-    elif args.selection_method == "our_progressive":
-        selected_indices = our_progressive(
             model_name, model, tokenizer, entry_pairs, labels, embeddings, args
         )
     elif args.selection_method == "cosine_sim":

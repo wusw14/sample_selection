@@ -19,9 +19,9 @@ dataset_dict = {
 }
 
 
-method = "max_entropy_bl"
-file_dir = f"results/results_baseline"
-dataset = sys.argv[1]
+method = "ideal"
+file_dir = f"results/results_{sys.argv[1]}"
+# dataset = sys.argv[1]
 llm_size = sys.argv[2]
 dataset_list = [
     "AG",
@@ -61,7 +61,7 @@ for dataset in dataset_list:
         ax.set_title(f"K = {k}, F1-score = {f1_score(label, pred)*100:.2f}")
     fig.suptitle(f"Prediction of test data on {dataset} by LLAMA2-{llm_size}b")
     plt.tight_layout()
-    fig_dir = f"results_plots/{method}/{dataset}"
+    fig_dir = f"{file_dir.replace('results/', 'results_plots/')}/{dataset}"
     if os.path.exists(fig_dir) == False:
         os.makedirs(fig_dir)
     plt.savefig(f"{fig_dir}/llama2-{llm_size}b.png")

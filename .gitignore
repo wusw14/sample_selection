@@ -6,6 +6,7 @@ results*
 *pyc
 *.py[cod]
 *$py.class
+*tmp*
 
 # C extensions
 *.so
