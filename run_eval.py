@@ -39,28 +39,30 @@ memoryInfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
 
 print(memoryInfo.used / memoryInfo.total)
 cnt, iter_num = 0, 0
-while True:
-    handle = pynvml.nvmlDeviceGetHandleByIndex(int(gpus.split(",")[0]))
-    memoryInfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
-    memory = memoryInfo.used / memoryInfo.total
-    if memory > 0.5:
-        cnt = 0
-        time.sleep(300)
-        iter_num += 1
-    else:
-        cnt += 1
-        print(f"cnt: {cnt}, memory: {memory}")
-        time.sleep(np.random.randint(10, 20))
-    if iter_num % 12 == 0:
-        print(f"{iter_num//12} hours passed")
-    if cnt > 10:
-        break
+# while True:
+#     handle = pynvml.nvmlDeviceGetHandleByIndex(int(gpus.split(",")[0]))
+#     memoryInfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
+#     memory = memoryInfo.used / memoryInfo.total
+#     if memory > 0.5:
+#         cnt = 0
+#         time.sleep(300)
+#         iter_num += 1
+#     else:
+#         cnt += 1
+#         print(f"cnt: {cnt}, memory: {memory}")
+#         time.sleep(np.random.randint(10, 20))
+#     if iter_num % 12 == 0:
+#         print(f"{iter_num//12} hours passed")
+#     if cnt > 10:
+#         break
 
 batch_size = 1
+serialization = "s6"
 
-for beam_size in [1, 2, 3, 4, 6, 8]:
+for beam_size in [5, 1, 2, 3, 4, 6, 8]:
+    # for beam_size in [5]:  # [1, 2, 3, 4, 6, 8]:
     for p in [0.7, 0.8, 0.9, 1.0][-1:]:
-        args.version = f"base_IG_ablation_BS{beam_size}"
+        args.version = f"0131_SRL6_BS{beam_size}_V3"
         for dataset in dataset_list:
             for selection_method in [
                 "MFL",
@@ -101,7 +103,7 @@ for beam_size in [1, 2, 3, 4, 6, 8]:
                             f"--selection_method {selection_method} "
                             f"--budget {budget} --batch_size {batch_size} "
                             f"--version {args.version} --order o7 "
-                            f"--serialization s6 "
+                            f"--serialization {serialization} "
                             f"--beam_size {beam_size} "
                             f"--p {p} "
                             f" >> logs/select_{args.version}/{dataset}/{selection_method}_{budget}_{lm}.log"
@@ -110,7 +112,7 @@ for beam_size in [1, 2, 3, 4, 6, 8]:
                         os.system(cmd)
                         # time.sleep(60)
 
-        for budget in [10, 8, 6][:1]:
+        for budget in [10, 8, 6][:2]:
             for dataset in dataset_list:
                 for selection_method in [
                     "MFL",
@@ -144,7 +146,7 @@ for beam_size in [1, 2, 3, 4, 6, 8]:
                             f"--selection_method {selection_method} "
                             f"--budget {budget} --batch_size {batch_size} "
                             f"--version {args.version} --order o7 "
-                            f"--serialization s6 "
+                            f"--serialization {serialization} "
                             f" >> logs/inference_{args.version}/{dataset}/{selection_method}_{budget}_{lm}.log"
                         )
                         print(cmd)
