@@ -95,8 +95,8 @@ def select_next(
             conf_pos.append(conf[idx])
         else:
             conf_neg.append(conf[idx])
-    conf_pos_upper = max(np.mean(conf_pos), 0.9)
-    conf_neg_upper = max(np.mean(conf_neg), 0.9)
+    conf_pos_upper = max(np.mean(conf_pos), 1)
+    conf_neg_upper = max(np.mean(conf_neg), 1)
     conf[selected_indices] = 2
     cond1 = (conf < conf_pos_upper) * (probs > 0.5)
     cond2 = (conf < conf_neg_upper) * (probs <= 0.5)
@@ -130,18 +130,38 @@ def select_next(
                 uncertain_indices,
                 [],
                 n=args.beam_size,
-                type="coverage2",
+                type="coverage",
             )
         print(f"uncertain_indices: {uncertain_indices}")
-        sample_indices, _ = sampling(
+        # sample_indices, _ = sampling(
+        #     historical_probs,
+        #     candidate_indices,
+        #     candidate_indices,
+        #     [],
+        #     n=20,
+        #     type="MFL_whole",
+        # )
+        # conf_pos_upper = max(np.mean(conf_pos), 0.9)
+        # conf_neg_upper = max(np.mean(conf_neg), 0.9)
+        # cond1 = (conf < conf_pos_upper) * (probs > 0.5)
+        # cond2 = (conf < conf_neg_upper) * (probs <= 0.5)
+        sample_indices_p1, _ = sampling(
             historical_probs,
-            candidate_indices,
-            candidate_indices,
+            np.where((cond1))[0],
+            np.where((cond1))[0],
             [],
-            n=20,
-            type="coverage2",
+            n=10,
+            type="MFL_whole",
         )
-
+        sample_indices_p2, _ = sampling(
+            historical_probs,
+            np.where((cond2))[0],
+            np.where((cond2))[0],
+            [],
+            n=10,
+            type="MFL_whole",
+        )
+        sample_indices = list(sample_indices_p1) + list(sample_indices_p2)
         print("sample indices", sample_indices)
         labeled_eval = labeled_set.union(set(uncertain_indices)) - set(selected_indices)
         # labeled_eval = labeled_set - set(selected_indices)
@@ -235,32 +255,42 @@ def sampling(
             for idx in sim_indices:
                 value_list[idx] = -1
     elif type == "coverage":
-        # partition into bins based on the recent probs
-        df_probs = pd.DataFrame({"id": indices, "prob": candidate_probs})
-        # df_probs["group"] = pd.cut(df_probs["prob"], bins=n, labels=list(range(n)))
-        _, bins = pd.qcut(df_probs["prob"], q=n, duplicates="drop", retbins=True)
-        print(bins)
-        df_probs["group"] = pd.qcut(
-            df_probs["prob"], q=n, duplicates="drop", labels=list(range(len(bins) - 1))
+        # partition into bins based on the recent confs
+        candidate_confs = conf_func(candidate_probs)
+        print(
+            f"max conf: {np.max(candidate_confs):.4f}, "
+            f"min conf: {np.min(candidate_confs):.4f}"
         )
-        for i in range(n):
-            df_sub = df_probs[df_probs.group == i]
+        df_confs = pd.DataFrame({"id": indices, "conf": candidate_confs})
+        df_confs["group"] = pd.cut(df_confs["conf"], bins=n, labels=list(range(n)))
+        i = 0
+        while i < n:
+            if len(df_confs) <= n - i:
+                selected_indices += df_confs.id.tolist()
+                break
+            df_sub = df_confs[df_confs.group == i]
             if len(df_sub) == 0:
+                df_confs = df_confs[df_confs.group > i]
+                if len(df_confs) == 0:
+                    break
+                df_confs["group"] = pd.cut(
+                    df_confs["conf"], bins=n - i, labels=list(np.arange(i, n))
+                )
                 continue
             cand_indices = df_sub.id.tolist()
             cand_reps = reps[cand_indices]
             # select the centroid one
-            dist_bw_cand = distance_matrix(cand_reps, cand_reps, p=1)  # [N1, N]
-            dist_bw_cand = np.sum(dist_bw_cand, axis=0)
+            dist_bw_cand = np.sum(distance_matrix(cand_reps, cand_reps, p=1), 1)
             selected_indices.append(cand_indices[np.argmin(dist_bw_cand)])
+            i += 1
     elif type == "coverage2":
         selected_indices = coverage(candidate_probs, candidate_reps, n)
     if type == "coverage":
         selected_indices = np.array(selected_indices)
     else:
         selected_indices = np.array(indices)[selected_indices]
-    print("selected_indices", selected_indices)
-    print("probs", np.round(probs[selected_indices], 4))
+    print(f"selected_indices: {list(selected_indices)}")
+    print(f"probs: {list(np.round(probs[selected_indices], 4))}")
     return selected_indices, np.ones(len(selected_indices))
 
 
@@ -283,7 +313,7 @@ def coverage(probs, reps, n):
             neighbor_dict[len(v)] += 1
         # print("dist", len(dist))
         # print("neighbor_dict", neighbor_dict)
-        confs = cal_conf(probs)
+        confs = conf_func(probs)
         indices_sorted_by_confs = np.argsort(confs)[::-1]
         selected_indices = []
         covered_indices = set()
@@ -440,10 +470,11 @@ def max_info_gain(
             CE_scores = labeled_labels * np.log(labeled_probs) + (
                 1 - labeled_labels
             ) * np.log(1 - labeled_probs)
+            CE_scores = np.clip(CE_scores, -100, np.log(0.5))
             CE_pos = cal_conf_avg(CE_scores, idx, labeled_eval, labeled_probs, "pos")
             CE_neg = cal_conf_avg(CE_scores, idx, labeled_eval, labeled_probs, "neg")
             CE_avg = cal_conf_avg(CE_scores, idx, labeled_eval, labeled_probs, "all")
-            score2 = CE_avg / 2 + min(CE_pos, CE_neg) / 2
+            score2 = CE_avg  # / 2 + min(CE_pos, CE_neg) / 2
         else:
             CE_avg, CE_pos, CE_neg, score2 = 0, 0, 0, 0
         ratio = len(labeled_eval) / float(len(sample_indices))
@@ -536,9 +567,13 @@ def ideal(model_name, model, tokenizer, inputs, labels, embeddings, args):
         historical_probs.append(probs)  # [T, N]
         conf = conf_func(probs)
 
-        if pos_neg_diff < -1:
+        if args.beam_size > 1:
+            cls_diff_thr = 1
+        else:
+            cls_diff_thr = 0
+        if pos_neg_diff < -cls_diff_thr:
             next = "pos"
-        elif pos_neg_diff > 1:
+        elif pos_neg_diff > cls_diff_thr:
             next = "neg"
         else:
             if np.sum(probs > 0.5) == np.sum(example_labels):
