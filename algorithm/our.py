@@ -68,11 +68,6 @@ def stratified_sampling(inputs, labels, embeddings, cosine_of_each_pair, args):
     return sample_inputs, sample_labels, sample_embeddings, sample_indices, scores
 
 
-def cal_conf(p):
-    scaler = -np.log(0.5)
-    return 1 + (p * np.log(p) + (1 - p) * np.log(1 - p)) / scaler
-
-
 def select_next(
     model_name,
     model,
@@ -133,33 +128,25 @@ def select_next(
                 type="coverage",
             )
         print(f"uncertain_indices: {uncertain_indices}")
-        # sample_indices, _ = sampling(
-        #     historical_probs,
-        #     candidate_indices,
-        #     candidate_indices,
-        #     [],
-        #     n=20,
-        #     type="MFL_whole",
-        # )
-        # conf_pos_upper = max(np.mean(conf_pos), 0.9)
-        # conf_neg_upper = max(np.mean(conf_neg), 0.9)
-        # cond1 = (conf < conf_pos_upper) * (probs > 0.5)
-        # cond2 = (conf < conf_neg_upper) * (probs <= 0.5)
+        # budget1 = int(round(20 * np.sum(cond1) / np.sum(cond1 | cond2), 0))
+        # budget1 = max(budget1, 5)
+        budget1 = 10
         sample_indices_p1, _ = sampling(
             historical_probs,
             np.where((cond1))[0],
             np.where((cond1))[0],
             [],
-            n=10,
-            type="MFL_whole",
+            n=budget1,
+            type="coverage2",
         )
+        budget2 = 20 - len(sample_indices_p1)
         sample_indices_p2, _ = sampling(
             historical_probs,
             np.where((cond2))[0],
             np.where((cond2))[0],
             [],
-            n=10,
-            type="MFL_whole",
+            n=budget2,
+            type="coverage2",
         )
         sample_indices = list(sample_indices_p1) + list(sample_indices_p2)
         print("sample indices", sample_indices)
@@ -295,66 +282,46 @@ def sampling(
 
 
 def coverage(probs, reps, n):
-    # construct the graph
-    dist = distance_matrix(reps, reps, p=1)  # [N, N]
-    num = n
-    while True:
-        thr = np.percentile(dist, 100.0 / num)
-        print(f"threshold for graph construction: {thr:.4f}")
-        graph = {}
-        for i in range(len(dist)):
-            graph[i] = []
-            for j in range(len(dist)):
-                if dist[i][j] <= thr:
-                    graph[i].append(j)
-        # debug: neighbor num
-        neighbor_dict = defaultdict(int)
-        for k, v in graph.items():
-            neighbor_dict[len(v)] += 1
-        # print("dist", len(dist))
-        # print("neighbor_dict", neighbor_dict)
-        confs = conf_func(probs)
-        indices_sorted_by_confs = np.argsort(confs)[::-1]
-        selected_indices = []
-        covered_indices = set()
-        while len(selected_indices) < n:
-            for idx in indices_sorted_by_confs:
-                if idx in covered_indices:
-                    continue
-                # # find the one-hop node with most neighbors
-                # neighbor_num = len(set(graph[idx]) - set(covered_indices))
-                # best_idx = idx
-                # for neighbor in graph[idx]:
-                #     if (
-                #         len(set(graph[neighbor]) - set(covered_indices)) > neighbor_num
-                #         and neighbor not in covered_indices
-                #     ):
-                #         neighbor_num = len(set(graph[neighbor]) - set(covered_indices))
-                #         best_idx = neighbor
-                # find the centroid node
-                neighbors = list(set(graph[idx]) - set(covered_indices))
-                dist_bw_neighbors = np.sum(dist[neighbors][:, neighbors], -1)
-                best_idx = neighbors[np.argmin(dist_bw_neighbors)]
-                selected_indices.append(best_idx)
-                covered_indices = covered_indices.union(set(graph[best_idx]))
-                # print("probs of current selected", probs[best_idx])
-                break
-            if len(covered_indices) == len(dist):
-                break
-        print(f"not covered: {len(dist) - len(covered_indices)}")
-        # select the centroid node for the remaining
-        if len(dist) - len(covered_indices) > 0 and len(selected_indices) < n:
-            remaining_indices = list(set(range(len(dist))) - covered_indices)
-            remaining_reps = reps[remaining_indices]
-            dist_bw_remaining = distance_matrix(
-                remaining_reps, remaining_reps, p=1
-            )  # [N1, N]
-            dist_bw_remaining = np.sum(dist_bw_remaining, axis=0)
-            selected_indices.append(remaining_indices[np.argmin(dist_bw_remaining)])
-        if len(dist) - len(covered_indices) > 2:
-            num -= 1
-        else:
-            break
+    # partition into bins based on the recent confs
+    confs = conf_func(probs)
+    print(
+        f"#Coverage Func# max conf: {np.max(confs):.4f}, min conf: {np.min(confs):.4f}"
+    )
+    df_confs = pd.DataFrame({"id": list(range(len(probs))), "conf": confs})
+    df_confs["group"] = pd.cut(
+        df_confs["conf"], bins=n // 2, labels=list(range(n // 2))
+    )
+    # allocate the budget to each bin
+    budget = np.zeros(n // 2)
+    for i in range(n // 2):
+        df_sub = df_confs[df_confs.group == i]
+        budget[i] = len(df_sub)
+    budget = np.array(budget)
+    # second max
+    budget_2nd_max = np.sort(budget)[-2]
+    budget = np.minimum(budget, budget_2nd_max)  # [n/2]
+    budget = budget / np.sum(budget) * n
+    group_id = np.argsort(budget)
+    # select the centroid one
+    selected_indices = []
+    for i in group_id:
+        df_sub = df_confs[df_confs.group == i]
+        if len(df_sub) == 0:
+            continue
+        num = max(1, int(round(budget[i], 0)))
+        # update budget
+        budget[i] = 0
+        if np.sum(budget) > 0:
+            budget = budget / np.sum(budget) * (n - len(selected_indices) - num)
+        df_sub["sub_group"] = pd.cut(df_sub["conf"], bins=num, labels=list(range(num)))
+        for j in range(num):
+            cand_indices = df_sub[df_sub.sub_group == j].id.tolist()
+            if len(cand_indices) == 0:
+                continue
+            cand_reps = reps[cand_indices]
+            # select the centroid one
+            dist_bw_cand = np.sum(distance_matrix(cand_reps, cand_reps, p=1), 1)
+            selected_indices.append(cand_indices[np.argmin(dist_bw_cand)])
     return selected_indices
 
 
@@ -378,11 +345,11 @@ def cal_conf_avg(conf, added_idx, sample_indices, probs, target):
     sample_indices = np.array(sample_indices)[cond]
     conf = conf[cond]
     if len(conf) == 0:
-        return 0
+        return 1
     if added_idx in sample_indices:
         index = list(sample_indices).index(added_idx)
         if len(conf) == 1:
-            return 0
+            return 1
         conf_avg = (np.sum(conf) - conf[index]) / (len(conf) - 1)
     else:
         conf_avg = np.mean(conf)
@@ -467,18 +434,24 @@ def max_info_gain(
             _, labeled_probs = inference(model_name, model, tokenizer, prompts, args)
             labeled_probs = np.array(labeled_probs)
             labeled_probs = np.clip(labeled_probs, 1e-6, 1 - 1e-6)
-            CE_scores = labeled_labels * np.log(labeled_probs) + (
-                1 - labeled_labels
-            ) * np.log(1 - labeled_probs)
-            CE_scores = np.clip(CE_scores, -100, np.log(0.5))
-            CE_pos = cal_conf_avg(CE_scores, idx, labeled_eval, labeled_probs, "pos")
-            CE_neg = cal_conf_avg(CE_scores, idx, labeled_eval, labeled_probs, "neg")
+            # CE_scores = labeled_labels * np.log(labeled_probs) + (
+            #     1 - labeled_labels
+            # ) * np.log(1 - labeled_probs)
+            # CE_scores = np.clip(CE_scores, -100, np.log(0.5))
+            CE_scores = labeled_labels * labeled_probs + (1 - labeled_labels) * (
+                1 - labeled_probs
+            )
+            CE_scores = np.clip(CE_scores, 0, 0.5)
+            CE_pos = cal_conf_avg(CE_scores, idx, labeled_eval, labeled_labels, "pos")
+            CE_neg = cal_conf_avg(CE_scores, idx, labeled_eval, labeled_labels, "neg")
             CE_avg = cal_conf_avg(CE_scores, idx, labeled_eval, labeled_probs, "all")
-            score2 = CE_avg  # / 2 + min(CE_pos, CE_neg) / 2
+            score2 = CE_avg / 2 + min(CE_pos, CE_neg) / 2
+            if score2 == 0.5:
+                score2 = 1
         else:
             CE_avg, CE_pos, CE_neg, score2 = 0, 0, 0, 0
         ratio = len(labeled_eval) / float(len(sample_indices))
-        score = score1 + score2 / 2 * ratio
+        score = score1 + score2  # / 2  # * ratio
         info_gain.append(score)
         print(
             f"newly added index: {idx}, predicted_prob: {probs[idx]:.4f}, "
@@ -567,10 +540,11 @@ def ideal(model_name, model, tokenizer, inputs, labels, embeddings, args):
         historical_probs.append(probs)  # [T, N]
         conf = conf_func(probs)
 
-        if args.beam_size > 1:
-            cls_diff_thr = 1
-        else:
-            cls_diff_thr = 0
+        # if args.beam_size > 1:
+        #     cls_diff_thr = 1
+        # else:
+        #     cls_diff_thr = 0
+        cls_diff_thr = 0
         if pos_neg_diff < -cls_diff_thr:
             next = "pos"
         elif pos_neg_diff > cls_diff_thr:
@@ -584,15 +558,17 @@ def ideal(model_name, model, tokenizer, inputs, labels, embeddings, args):
                 labeled_eval = labeled_set - set(selected_indices)
                 pos_scores, neg_scores = [], []
                 for idx in labeled_eval:
-                    ce = labels[idx] * np.log(probs[idx]) + (1 - labels[idx]) * np.log(
-                        1 - probs[idx]
-                    )
-                    if probs[idx] > 0.5:
+                    # ce = labels[idx] * np.log(probs[idx]) + (1 - labels[idx]) * np.log(
+                    #     1 - probs[idx]
+                    # )
+                    ce = labels[idx] * probs[idx] + (1 - labels[idx]) * (1 - probs[idx])
+                    ce = min(ce, 0.5)
+                    if labels[idx] == 1:
                         pos_scores.append(ce)
                     else:
                         neg_scores.append(ce)
-                pos_avg = np.mean(pos_scores) if len(pos_scores) > 0 else np.log(0.5)
-                neg_avg = np.mean(neg_scores) if len(neg_scores) > 0 else np.log(0.5)
+                pos_avg = np.mean(pos_scores) if len(pos_scores) > 0 else 0.5
+                neg_avg = np.mean(neg_scores) if len(neg_scores) > 0 else 0.5
                 if pos_avg > neg_avg:
                     next = "neg"
                 else:
