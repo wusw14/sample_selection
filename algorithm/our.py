@@ -9,6 +9,7 @@ from sklearn.metrics import silhouette_score
 import math
 from utils.misc import evaluate
 from scipy.stats import rankdata
+from sklearn.metrics import f1_score
 
 
 def agg_probs(prob_reps, window=2):
@@ -434,30 +435,34 @@ def max_info_gain(
             _, labeled_probs = inference(model_name, model, tokenizer, prompts, args)
             labeled_probs = np.array(labeled_probs)
             labeled_probs = np.clip(labeled_probs, 1e-6, 1 - 1e-6)
-            # CE_scores = labeled_labels * np.log(labeled_probs) + (
-            #     1 - labeled_labels
-            # ) * np.log(1 - labeled_probs)
-            # CE_scores = np.clip(CE_scores, -100, np.log(0.5))
-            CE_scores = labeled_labels * labeled_probs + (1 - labeled_labels) * (
-                1 - labeled_probs
-            )
-            CE_scores = np.clip(CE_scores, 0, 0.5)
+            # CE_scores = labeled_labels * labeled_probs + (1 - labeled_labels) * (
+            #     1 - labeled_probs
+            # )
+            # CE_scores = np.clip(CE_scores, 0, 0.5)
+            CE_scores = labeled_labels == (labeled_probs > 0.5)
             CE_pos = cal_conf_avg(CE_scores, idx, labeled_eval, labeled_labels, "pos")
             CE_neg = cal_conf_avg(CE_scores, idx, labeled_eval, labeled_labels, "neg")
             CE_avg = cal_conf_avg(CE_scores, idx, labeled_eval, labeled_probs, "all")
             score2 = CE_avg / 2 + min(CE_pos, CE_neg) / 2
-            if score2 == 0.5:
-                score2 = 1
+            # if np.sum(labeled_labels) == 0:
+            #     pre, rec, f1, score2 = 1, 1, 1, 1
+            # else:
+            #     pre, rec, f1 = evaluate(labeled_labels, labeled_probs > 0.5)
+            #     score2 = f1 / 100
+            # if score2 == 0.5:
+            #     score2 = 1
         else:
             CE_avg, CE_pos, CE_neg, score2 = 0, 0, 0, 0
+            # pre, rec, f1, score2 = 0, 0, 0, 0
         ratio = len(labeled_eval) / float(len(sample_indices))
-        score = score1 + score2  # / 2  # * ratio
+        score = score1 + score2 / 2  # * ratio
         info_gain.append(score)
         print(
             f"newly added index: {idx}, predicted_prob: {probs[idx]:.4f}, "
             f"ground truth label: {labels[idx]}, "
             f"score_all: {score:.4f}, score1: {score1:.4f}, score2: {score2:.4f}, "
             f"conf_p1: {conf_p1_avg:.4f}, conf_p2: {conf_p2_avg:.4f}, conf_avg: {conf_avg:.4f}, "
+            # f"pre: {pre:.2f}, rec: {rec:.2f}, f1: {f1:.2f}"
             f"CE_p1: {CE_pos:.4f}, CE_p2: {CE_neg:.4f}, CE_avg: {CE_avg:.4f} "
         )
         del example_inputs[-1]
@@ -555,24 +560,23 @@ def ideal(model_name, model, tokenizer, inputs, labels, embeddings, args):
             elif np.sum(probs <= 0.5) == len(example_labels) - np.sum(example_labels):
                 next = "neg"
             else:
-                labeled_eval = labeled_set - set(selected_indices)
-                pos_scores, neg_scores = [], []
-                for idx in labeled_eval:
-                    # ce = labels[idx] * np.log(probs[idx]) + (1 - labels[idx]) * np.log(
-                    #     1 - probs[idx]
-                    # )
-                    ce = labels[idx] * probs[idx] + (1 - labels[idx]) * (1 - probs[idx])
-                    ce = min(ce, 0.5)
-                    if labels[idx] == 1:
-                        pos_scores.append(ce)
-                    else:
-                        neg_scores.append(ce)
-                pos_avg = np.mean(pos_scores) if len(pos_scores) > 0 else 0.5
-                neg_avg = np.mean(neg_scores) if len(neg_scores) > 0 else 0.5
-                if pos_avg > neg_avg:
-                    next = "neg"
-                else:
+                labeled_eval = list(labeled_set - set(selected_indices))
+                if len(labeled_eval) == 0:
                     next = "pos"
+                else:
+                    eval_labels = np.array(labels)[labeled_eval]
+                    eval_pseudo = np.array(probs[labeled_eval] > 0.5, dtype=int)
+                    scores = eval_labels == eval_pseudo
+                    pos_avg = np.mean(scores[labeled_eval == 1])
+                    neg_avg = np.mean(scores[labeled_eval == 0])
+                    if np.sum(eval_labels) == 0:
+                        pos_avg = 0.5
+                    if np.sum(eval_labels) == 0:
+                        neg_avg = 0.5
+                    if pos_avg > neg_avg:
+                        next = "neg"
+                    else:
+                        next = "pos"
         idx, labeled_indices = select_next(
             model_name,
             model,
