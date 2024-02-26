@@ -35,8 +35,6 @@ def cal_cosine_sim(args):
 
 def stratified_sampling(inputs, labels, embeddings, cosine_of_each_pair, args):
     budget = 100
-    # budget = int(max(100, np.ceil(len(labels) / (args.k * (args.k + 1) / 2.0))))
-    # budget = int(max(100, np.ceil(len(labels) / args.k)))
     # by cosine similarity and null values distribution
     df = pd.DataFrame({"id": list(range(len(inputs))), "score": cosine_of_each_pair})
     # bin_num = budget // 5
@@ -91,19 +89,13 @@ def select_next(
             conf_pos.append(conf[idx])
         else:
             conf_neg.append(conf[idx])
-    conf_pos_upper = max(np.mean(conf_pos), 1)
-    conf_neg_upper = max(np.mean(conf_neg), 1)
     conf[selected_indices] = 2
-    cond1 = (conf < conf_pos_upper) * (probs > 0.5)
-    cond2 = (conf < conf_neg_upper) * (probs <= 0.5)
+    cond1 = (probs > 0.5) & (conf < 2)
+    cond2 = (probs <= 0.5) & (conf < 2)
     if next == "pos":
         cond = cond1
     else:
         cond = cond2
-    print(
-        f"conf_pos_upper: {conf_pos_upper:.4f}, conf_neg_upper: {conf_neg_upper:.4f} "
-        f"remained: {np.sum(cond1)+np.sum(cond2)}"
-    )
 
     if np.sum(cond) > 0:
         uncertain_indices = np.where(cond)[0]
@@ -118,41 +110,41 @@ def select_next(
         index = uncertain_indices[np.argmax(conf[uncertain_indices])]
         uncertain_indices = [index]
     else:
-        candidate_indices = np.where((cond1 | cond2))[0]
         if len(uncertain_indices) > args.beam_size:
+            labeled_indices = []
+            for idx in labeled_set:
+                if idx not in selected_indices and labels[idx] == int(next == "pos"):
+                    labeled_indices.append(idx)
             uncertain_indices, _ = sampling(
                 historical_probs,
                 uncertain_indices,
-                uncertain_indices,
-                [],
+                labeled_indices,
                 n=args.beam_size,
-                type="coverage",
+                type="covered_by_rep",
+            )
+            uncertain_indices = list(uncertain_indices) + list(
+                set(labeled_indices) - set(uncertain_indices)
             )
         print(f"uncertain_indices: {uncertain_indices}")
-        # budget1 = int(round(20 * np.sum(cond1) / np.sum(cond1 | cond2), 0))
-        # budget1 = max(budget1, 5)
         budget1 = 10
         sample_indices_p1, _ = sampling(
             historical_probs,
-            np.where((cond1))[0],
-            np.where((cond1))[0],
+            np.where(cond1)[0],
             [],
             n=budget1,
-            type="coverage2",
+            type="covered_by_rep",
         )
         budget2 = 20 - len(sample_indices_p1)
         sample_indices_p2, _ = sampling(
             historical_probs,
-            np.where((cond2))[0],
-            np.where((cond2))[0],
+            np.where(cond2)[0],
             [],
             n=budget2,
-            type="coverage2",
+            type="covered_by_rep",
         )
         sample_indices = list(sample_indices_p1) + list(sample_indices_p2)
-        print("sample indices", sample_indices)
+        print("### eval indices", sample_indices)
         labeled_eval = labeled_set.union(set(uncertain_indices)) - set(selected_indices)
-        # labeled_eval = labeled_set - set(selected_indices)
         print("labeled_eval", labeled_eval)
         index = max_info_gain(
             model_name,
@@ -175,17 +167,22 @@ def select_next(
 def sampling(
     historical_probs,
     indices,
-    indices_all,
     labeled_indices,
     n=10,
     type="MFL_whole",
 ):
-    if n >= len(indices):
+    labeled_indices_new = []
+    for idx in labeled_indices:
+        if idx in indices:
+            labeled_indices_new.append(list(indices).index(idx))
+    if n >= len(indices) - len(labeled_indices_new):
         return indices, np.ones(len(indices))
     # MFL
     probs = historical_probs[-1]
     reps = np.array(historical_probs).T  # [N, T]
-    all_reps = reps[indices_all]
+    # reweighting the reps
+    weights = np.array([1.0 / 2 ** (len(reps[0]) - i) for i in range(len(reps[0]))])
+    reps = reps * weights[None,]
     candidate_reps = reps[indices]
     candidate_probs = np.array(probs)[indices]
     if type == "Kmeans":
@@ -196,52 +193,6 @@ def sampling(
             dist = dist[0]
             selected_indices.append(indices[np.argmin(dist)])
         return selected_indices, np.ones(len(selected_indices))
-    if len(labeled_indices) > 0:
-        labeled_reps = reps[labeled_indices]
-        dist_selected = distance_matrix(labeled_reps, all_reps, p=1)  # [N1, N]
-        dist_min_cur = np.min(dist_selected, axis=0)
-    else:
-        dist_min_cur = np.ones(len(all_reps)) * len(all_reps)
-    dist_matrix = distance_matrix(candidate_reps, all_reps, p=1)  # [N2, N]
-    selected_indices, scores = [], []
-    if type == "MFL_whole":
-        while len(selected_indices) < n:
-            max_score, idx = -1, -1
-            for i in range(len(indices)):
-                if i in selected_indices:
-                    continue
-                value = dist_min_cur - dist_matrix[i]
-                score = np.sum(value[value > 0])
-                if score > max_score:
-                    max_score = score
-                    idx = i
-            selected_indices.append(idx)
-            dist_min_cur = np.minimum(dist_min_cur, dist_matrix[idx])
-            scores.append(max_score)
-    elif type == "MFL_ind":
-        value_list = []
-        for i in range(len(indices)):
-            value = dist_min_cur - dist_matrix[i]
-            value_list.append(np.sum(value[value > 0]))
-        value_list = np.array(value_list)
-        tmp = sorted(
-            zip(value_list, candidate_reps[:, -1:].reshape(-1)),
-            key=lambda x: x[0],
-            reverse=True,
-        )
-        print([v for v in tmp])
-        selected_indices = []
-        while len(selected_indices) < n:
-            k = len(indices) // (n - len(selected_indices))
-            idx = np.argmax(value_list)
-            selected_indices.append(idx)
-            # set the top k similar to -1
-            dist_bw_indices = distance_matrix(
-                [candidate_reps[idx]], candidate_reps, p=1
-            )[0]
-            sim_indices = np.argsort(dist_bw_indices)[:k]
-            for idx in sim_indices:
-                value_list[idx] = -1
     elif type == "coverage":
         # partition into bins based on the recent confs
         candidate_confs = conf_func(candidate_probs)
@@ -271,18 +222,25 @@ def sampling(
             dist_bw_cand = np.sum(distance_matrix(cand_reps, cand_reps, p=1), 1)
             selected_indices.append(cand_indices[np.argmin(dist_bw_cand)])
             i += 1
-    elif type == "coverage2":
-        selected_indices = coverage(candidate_probs, candidate_reps, n)
+    elif type == "coverage_by_conf":
+        selected_indices = coverage_by_conf(candidate_probs, candidate_reps, n)
+    elif type == "covered_by_rep":
+        selected_indices = coverage_by_rep(
+            candidate_probs,
+            candidate_reps,
+            n + len(labeled_indices_new),
+            labeled_indices_new,
+        )
     if type == "coverage":
         selected_indices = np.array(selected_indices)
     else:
         selected_indices = np.array(indices)[selected_indices]
-    print(f"selected_indices: {list(selected_indices)}")
-    print(f"probs: {list(np.round(probs[selected_indices], 4))}")
+    print(f"[{type}] selected_indices: {list(selected_indices)}")
+    print(f"[{type}] probs: {list(np.round(probs[selected_indices], 4))}")
     return selected_indices, np.ones(len(selected_indices))
 
 
-def coverage(probs, reps, n):
+def coverage_by_conf(probs, reps, n):
     # partition into bins based on the recent confs
     confs = conf_func(probs)
     print(
@@ -298,9 +256,9 @@ def coverage(probs, reps, n):
         df_sub = df_confs[df_confs.group == i]
         budget[i] = len(df_sub)
     budget = np.array(budget)
-    # second max
-    budget_2nd_max = np.sort(budget)[-2]
-    budget = np.minimum(budget, budget_2nd_max)  # [n/2]
+    # # second max
+    # budget_2nd_max = np.sort(budget)[-2]
+    # budget = np.minimum(budget, budget_2nd_max)  # [n/2]
     budget = budget / np.sum(budget) * n
     group_id = np.argsort(budget)
     # select the centroid one
@@ -326,6 +284,58 @@ def coverage(probs, reps, n):
     return selected_indices
 
 
+def coverage_by_rep(probs, reps, n, labeled_indices):
+    dist = distance_matrix(reps, reps, p=1)  # [N, N]
+    neighbor_num = n
+    n_list = []
+    org_prob_range = np.max(probs) - np.min(probs)
+    print(f"candidates from labeled: {labeled_indices}, budget: {n}")
+    print(
+        f"org_prob_range: {org_prob_range:.4f}, "
+        f"max_prob: {np.max(probs):.4f}, min_prob: {np.min(probs):.4f}"
+    )
+    while True:
+        n_list.append(neighbor_num)
+        dist_thr = np.percentile(dist, neighbor_num / len(probs) * 100.0)
+        graph = {}
+        for i in range(len(probs)):
+            graph[i] = []
+            for j in range(len(probs)):
+                if dist[i, j] <= dist_thr:
+                    graph[i].append(j)
+        covered_set = set()
+        selected_indices = list(labeled_indices)
+        for idx in labeled_indices:
+            covered_set = covered_set.union(set(graph[idx]))
+        while len(covered_set) < len(probs) and len(selected_indices) < n:
+            max_covered = -1
+            idx = -1
+            for i in range(len(probs)):
+                if i in covered_set:
+                    continue
+                new_covered = len(set(graph[i]) - covered_set)
+                if new_covered > max_covered:
+                    max_covered = new_covered
+                    idx = i
+            covered_set = covered_set.union(set(graph[idx]))
+            selected_indices.append(idx)
+        covered_prob_range = np.max(probs[selected_indices]) - np.min(
+            probs[selected_indices]
+        )
+        if len(selected_indices) < n and len(covered_set) == len(probs):
+            neighbor_num -= 1
+        elif covered_prob_range > org_prob_range * (1 - 1.0 / n) and len(
+            covered_set
+        ) > 0.8 * len(probs):
+            break
+        else:
+            neighbor_num += 1
+        if neighbor_num in n_list or neighbor_num < 1 or neighbor_num >= len(probs):
+            break
+    print(f"covered_prob_range: {covered_prob_range:.4f}, neighbor_num: {neighbor_num}")
+    return selected_indices
+
+
 def conf_func(prob):
     # v1
     conf = np.maximum(prob, 1 - prob)
@@ -336,7 +346,7 @@ def conf_func(prob):
     return conf
 
 
-def cal_conf_avg(conf, added_idx, sample_indices, probs, target):
+def cal_avg(conf, added_idx, sample_indices, probs, target):
     if target == "pos":
         cond = probs > 0.5
     elif target == "neg":
@@ -397,8 +407,8 @@ def max_info_gain(
     # calculate information gain of each uncertain sample
     probs_org = np.array(probs)[sample_indices]
     conf_org = conf_func(probs_org)
-    conf_p1_avg = cal_conf_avg(conf_org, -1, sample_indices, probs_org, "pos")
-    conf_p2_avg = cal_conf_avg(conf_org, -1, sample_indices, probs_org, "neg")
+    conf_p1_avg = cal_avg(conf_org, -1, sample_indices, probs_org, "pos")
+    conf_p2_avg = cal_avg(conf_org, -1, sample_indices, probs_org, "neg")
     print(f"sampled_probs: {list(np.round(probs_org, 4))}")
     print(f"Original conf_p1: {conf_p1_avg:.4f}, conf_p2: {conf_p2_avg:.4f}")
     info_gain = []
@@ -418,9 +428,9 @@ def max_info_gain(
         _, probs_temp = inference(model_name, model, tokenizer, prompts, args)
         probs_temp = np.array(probs_temp)
         conf_temp = conf_func(probs_temp)
-        conf_p1_avg = cal_conf_avg(conf_temp, idx, sample_indices, probs_temp, "pos")
-        conf_p2_avg = cal_conf_avg(conf_temp, idx, sample_indices, probs_temp, "neg")
-        conf_avg = cal_conf_avg(conf_temp, idx, sample_indices, probs_temp, "all")
+        conf_p1_avg = cal_avg(conf_temp, idx, sample_indices, probs_temp, "pos")
+        conf_p2_avg = cal_avg(conf_temp, idx, sample_indices, probs_temp, "neg")
+        conf_avg = cal_avg(conf_temp, idx, sample_indices, probs_temp, "all")
         score1 = conf_avg / 2 + min(conf_p1_avg, conf_p2_avg) / 2
         # part 2: informativeness calculation
         if len(labeled_eval) > 0:
@@ -440,9 +450,9 @@ def max_info_gain(
             # )
             # CE_scores = np.clip(CE_scores, 0, 0.5)
             CE_scores = labeled_labels == (labeled_probs > 0.5)
-            CE_pos = cal_conf_avg(CE_scores, idx, labeled_eval, labeled_labels, "pos")
-            CE_neg = cal_conf_avg(CE_scores, idx, labeled_eval, labeled_labels, "neg")
-            CE_avg = cal_conf_avg(CE_scores, idx, labeled_eval, labeled_probs, "all")
+            CE_pos = cal_avg(CE_scores, idx, labeled_eval, labeled_labels, "pos")
+            CE_neg = cal_avg(CE_scores, idx, labeled_eval, labeled_labels, "neg")
+            CE_avg = cal_avg(CE_scores, idx, labeled_eval, labeled_probs, "all")
             score2 = CE_avg / 2 + min(CE_pos, CE_neg) / 2
             # if np.sum(labeled_labels) == 0:
             #     pre, rec, f1, score2 = 1, 1, 1, 1
@@ -545,14 +555,9 @@ def ideal(model_name, model, tokenizer, inputs, labels, embeddings, args):
         historical_probs.append(probs)  # [T, N]
         conf = conf_func(probs)
 
-        # if args.beam_size > 1:
-        #     cls_diff_thr = 1
-        # else:
-        #     cls_diff_thr = 0
-        cls_diff_thr = 0
-        if pos_neg_diff < -cls_diff_thr:
+        if pos_neg_diff < 0:
             next = "pos"
-        elif pos_neg_diff > cls_diff_thr:
+        elif pos_neg_diff > 0:
             next = "neg"
         else:
             if np.sum(probs > 0.5) == np.sum(example_labels):
@@ -626,7 +631,7 @@ def ideal(model_name, model, tokenizer, inputs, labels, embeddings, args):
         # find cut-off point to maximize F1 on labeled
         optimal_p = 0.5
         _, _, f1_best = evaluate(labeled_labels, labeled_probs > 0.5)
-        for p in np.arange(0, 1, 0.1):
+        for p in np.arange(0.3, 0.8, 0.1):
             precision, recall, f1 = evaluate(labeled_labels, labeled_probs > p)
             print(
                 f"p: {p:.2f}, Precision {precision:.2f} Recall {recall:.2f} F1 {f1:.2f}"
