@@ -93,7 +93,7 @@ def load_selected_indices(args):
         input_file = os.path.join(data_dir, f"{args.selection_method}_{args.lm}.csv")
     df_selected = pd.read_csv(input_file)
     if args.selection_method in ["votek", "adaicl"]:
-        df_selected = df_selected[df_selected.budget == args.budget]
+        df_selected = df_selected[df_selected.k == args.k]
         selected_indices = df_selected["index"].tolist()
     else:
         selected_indices = df_selected["index"].tolist()[: args.budget]
@@ -135,16 +135,6 @@ def initialization(args):
 
     example_inputs, example_labels, example_embeddings = load_in_context_examples(args)
     print(example_labels)
-    # model_name, model, tokenizer = init_model(args)
-    # example_inputs, example_labels, example_embeddings = reorder(
-    #     model_name,
-    #     model,
-    #     tokenizer,
-    #     example_inputs,
-    #     example_labels,
-    #     example_embeddings,
-    #     args,
-    # )
 
     test_entry_pairs, test_labels, test_embeddings = load_test(args)
     test_prompts = construct_prompt(
@@ -165,9 +155,7 @@ def initialization(args):
 if __name__ == "__main__":
     torch.cuda.empty_cache()
     args = parse_args()
-    if args.budget > 10:
-        exit()
-    output_file = f"results/results_{args.version}/{args.dataset}/{args.selection_method}_{args.budget}_{args.lm}.csv"
+    output_file = f"results/results_{args.version}/{args.dataset}/{args.selection_method}_{args.lm}.csv"
     if os.path.exists(output_file):
         print("File exists")
         exit()

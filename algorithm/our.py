@@ -77,6 +77,7 @@ def select_next(
     historical_probs,
     selected_indices,
     labeled_set,
+    historical_info,  # [{}, {}] 0: pos, 1: neg
     conf,
     args,
     next="pos",
@@ -111,34 +112,53 @@ def select_next(
         uncertain_indices = [index]
     else:
         if len(uncertain_indices) > args.beam_size:
-            labeled_indices = []
-            for idx in labeled_set:
-                if idx not in selected_indices and labels[idx] == int(next == "pos"):
-                    labeled_indices.append(idx)
+            if next == "pos":
+                info_dict = historical_info[0]
+            else:
+                info_dict = historical_info[1]
+            # get top from info_dict
+            if len(info_dict) > 0:
+                top_indices, _ = zip(
+                    *sorted(
+                        info_dict.items(),
+                        key=lambda x: np.mean(x[-1]),
+                        reverse=True,
+                    )
+                )
+                false_indices = []
+                for idx in top_indices[args.beam_size :]:
+                    if int(probs[idx] > 0.5) != int(next == "pos"):
+                        false_indices.append(idx)
+                    if len(false_indices) >= args.beam_size:
+                        break
+                top_indices = list(top_indices)[: args.beam_size] + false_indices
+            else:
+                top_indices = []
+            print(f"*** top_indices: {top_indices}")
             uncertain_indices, _ = sampling(
                 historical_probs,
                 uncertain_indices,
-                labeled_indices,
+                [[], labeled_set],
                 n=args.beam_size,
                 type="covered_by_rep",
             )
             uncertain_indices = list(uncertain_indices) + list(
-                set(labeled_indices) - set(uncertain_indices)
+                set(top_indices) - set(uncertain_indices)
             )
         print(f"uncertain_indices: {uncertain_indices}")
-        budget1 = 10
+        budget1 = args.eval_size // 2
         sample_indices_p1, _ = sampling(
             historical_probs,
             np.where(cond1)[0],
-            [],
+            None,
             n=budget1,
             type="covered_by_rep",
         )
-        budget2 = 20 - len(sample_indices_p1)
+        budget2 = args.eval_size - len(sample_indices_p1)
         sample_indices_p2, _ = sampling(
             historical_probs,
             np.where(cond2)[0],
-            [],
+            None,
             n=budget2,
             type="covered_by_rep",
         )
@@ -146,7 +166,7 @@ def select_next(
         print("### eval indices", sample_indices)
         labeled_eval = labeled_set.union(set(uncertain_indices)) - set(selected_indices)
         print("labeled_eval", labeled_eval)
-        index = max_info_gain(
+        index, info_dict = max_info_gain(
             model_name,
             model,
             tokenizer,
@@ -160,24 +180,35 @@ def select_next(
             probs,
             args,
         )
+        # update historical info
+        for idx, value in info_dict.items():
+            if idx == index:
+                continue
+            if labels[idx] == 1:
+                historical_info[0][idx].append(value)
+            else:
+                historical_info[1][idx].append(value)
     print(f"flag = {flag}, selected_index = {index}")
-    return index, uncertain_indices
+    return index, uncertain_indices, historical_info
 
 
 def sampling(
     historical_probs,
     indices,
-    labeled_indices,
+    labeled_info,  # [top_indices, labeled_set]
     n=10,
     type="MFL_whole",
 ):
     labeled_indices_new = []
-    for idx in labeled_indices:
-        if idx in indices:
-            labeled_indices_new.append(list(indices).index(idx))
+    selected_indices = []
+    if labeled_info is not None:
+        for idx in labeled_info[1]:
+            if idx in indices:
+                labeled_indices_new.append(list(indices).index(idx))
+                if idx in labeled_info[0]:
+                    selected_indices.append(list(indices).index(idx))
     if n >= len(indices) - len(labeled_indices_new):
         return indices, np.ones(len(indices))
-    # MFL
     probs = historical_probs[-1]
     reps = np.array(historical_probs).T  # [N, T]
     # reweighting the reps
@@ -228,7 +259,8 @@ def sampling(
         selected_indices = coverage_by_rep(
             candidate_probs,
             candidate_reps,
-            n + len(labeled_indices_new),
+            n + len(selected_indices),
+            selected_indices,
             labeled_indices_new,
         )
     if type == "coverage":
@@ -284,13 +316,15 @@ def coverage_by_conf(probs, reps, n):
     return selected_indices
 
 
-def coverage_by_rep(probs, reps, n, labeled_indices):
+def coverage_by_rep(probs, reps, n, selected_indices_org, labeled_indices):
     dist = distance_matrix(reps, reps, p=1)  # [N, N]
     neighbor_num = n
     n_list = []
+    sample_list = []
+    max_score, max_cover_range = 0, 0
     org_prob_range = np.max(probs) - np.min(probs)
-    print(f"candidates from labeled: {labeled_indices}, budget: {n}")
     print(
+        f"budget: {n}, selected_indices: {selected_indices_org}, "
         f"org_prob_range: {org_prob_range:.4f}, "
         f"max_prob: {np.max(probs):.4f}, min_prob: {np.min(probs):.4f}"
     )
@@ -303,10 +337,12 @@ def coverage_by_rep(probs, reps, n, labeled_indices):
             for j in range(len(probs)):
                 if dist[i, j] <= dist_thr:
                     graph[i].append(j)
-        covered_set = set()
-        selected_indices = list(labeled_indices)
-        for idx in labeled_indices:
+        covered_set = set(list(labeled_indices))
+        selected_indices = list(selected_indices_org)
+        for idx in selected_indices:
             covered_set = covered_set.union(set(graph[idx]))
+        if len(sample_list) == 0:
+            print(f"org covered_set: {covered_set}")
         while len(covered_set) < len(probs) and len(selected_indices) < n:
             max_covered = -1
             idx = -1
@@ -322,6 +358,17 @@ def coverage_by_rep(probs, reps, n, labeled_indices):
         covered_prob_range = np.max(probs[selected_indices]) - np.min(
             probs[selected_indices]
         )
+        score = (
+            len(selected_indices) / n
+            + covered_prob_range / org_prob_range
+            + len(covered_set) / len(probs)
+        )
+        if max_score < score:
+            max_score = score
+            sample_list = list(selected_indices)
+            max_cover_range = covered_prob_range
+            max_cover_ratio = len(covered_set) / len(probs)
+            best_neighbor_num = neighbor_num
         if len(selected_indices) < n and len(covered_set) == len(probs):
             neighbor_num -= 1
         elif covered_prob_range > org_prob_range * (1 - 1.0 / n) and len(
@@ -332,8 +379,11 @@ def coverage_by_rep(probs, reps, n, labeled_indices):
             neighbor_num += 1
         if neighbor_num in n_list or neighbor_num < 1 or neighbor_num >= len(probs):
             break
-    print(f"covered_prob_range: {covered_prob_range:.4f}, neighbor_num: {neighbor_num}")
-    return selected_indices
+    print(
+        f"covered_prob_range: {max_cover_range:.4f}, "
+        f"covered_ratio: {max_cover_ratio:.4f} neighbor: {best_neighbor_num}"
+    )
+    return sample_list
 
 
 def conf_func(prob):
@@ -445,22 +495,11 @@ def max_info_gain(
             _, labeled_probs = inference(model_name, model, tokenizer, prompts, args)
             labeled_probs = np.array(labeled_probs)
             labeled_probs = np.clip(labeled_probs, 1e-6, 1 - 1e-6)
-            # CE_scores = labeled_labels * labeled_probs + (1 - labeled_labels) * (
-            #     1 - labeled_probs
-            # )
-            # CE_scores = np.clip(CE_scores, 0, 0.5)
             CE_scores = labeled_labels == (labeled_probs > 0.5)
             CE_pos = cal_avg(CE_scores, idx, labeled_eval, labeled_labels, "pos")
             CE_neg = cal_avg(CE_scores, idx, labeled_eval, labeled_labels, "neg")
             CE_avg = cal_avg(CE_scores, idx, labeled_eval, labeled_probs, "all")
             score2 = CE_avg / 2 + min(CE_pos, CE_neg) / 2
-            # if np.sum(labeled_labels) == 0:
-            #     pre, rec, f1, score2 = 1, 1, 1, 1
-            # else:
-            #     pre, rec, f1 = evaluate(labeled_labels, labeled_probs > 0.5)
-            #     score2 = f1 / 100
-            # if score2 == 0.5:
-            #     score2 = 1
         else:
             CE_avg, CE_pos, CE_neg, score2 = 0, 0, 0, 0
             # pre, rec, f1, score2 = 0, 0, 0, 0
@@ -479,8 +518,14 @@ def max_info_gain(
         del example_labels[-1]
         del example_embeddings[-1]
     print(f"uncertain_indices: {uncertain_indices}")
-    print(np.round(np.array(info_gain), 4))
-    return uncertain_indices[np.argmax(info_gain)]
+    print(f"info_gain: {np.round(np.array(info_gain), 4)}")
+    # normalize info_dict
+    info_rank = np.array(rankdata(info_gain)) / len(info_gain)
+    info_dict = {}
+    for i, idx in enumerate(uncertain_indices):
+        info_dict[idx] = info_rank[i]
+    print(f"info_dict: {info_dict}")
+    return uncertain_indices[np.argmax(info_gain)], info_dict
 
 
 def select_by_cosine_sim(
@@ -529,10 +574,14 @@ def ideal(model_name, model, tokenizer, inputs, labels, embeddings, args):
         example_embeddings.append(embeddings[idx])
 
     # iterative sampling by confidence
+    historical_info = [defaultdict(list), defaultdict(list)]
     historical_probs = []
     labeled_set = set(selected_indices)
 
-    while len(selected_indices) < min(args.k, args.budget):
+    while len(selected_indices) < args.k:
+        args.beam_size = (args.budget - len(labeled_set)) // (
+            args.k - len(selected_indices)
+        )
         pos_neg_diff = 2 * np.sum(example_labels) - len(example_labels)
         print(f"****************")
         print(f"iteration {len(selected_indices) + 1}")
@@ -571,18 +620,21 @@ def ideal(model_name, model, tokenizer, inputs, labels, embeddings, args):
                 else:
                     eval_labels = np.array(labels)[labeled_eval]
                     eval_pseudo = np.array(probs[labeled_eval] > 0.5, dtype=int)
-                    scores = eval_labels == eval_pseudo
-                    pos_avg = np.mean(scores[labeled_eval == 1])
-                    neg_avg = np.mean(scores[labeled_eval == 0])
+                    scores = (eval_labels == eval_pseudo).astype(int)
+                    pos_avg = np.mean(scores[eval_labels == 1])
+                    neg_avg = np.mean(scores[eval_labels == 0])
                     if np.sum(eval_labels) == 0:
                         pos_avg = 0.5
-                    if np.sum(eval_labels) == 0:
+                    if np.sum(eval_labels) == len(eval_labels):
                         neg_avg = 0.5
                     if pos_avg > neg_avg:
                         next = "neg"
                     else:
                         next = "pos"
-        idx, labeled_indices = select_next(
+                    print(
+                        f"pos_avg: {pos_avg:.4f}, neg_avg: {neg_avg:.4f} => next: {next}"
+                    )
+        idx, labeled_indices, historical_info = select_next(
             model_name,
             model,
             tokenizer,
@@ -592,6 +644,7 @@ def ideal(model_name, model, tokenizer, inputs, labels, embeddings, args):
             historical_probs,
             selected_indices,
             labeled_set,
+            historical_info,
             conf,
             args,
             next=next,
@@ -640,9 +693,5 @@ def ideal(model_name, model, tokenizer, inputs, labels, embeddings, args):
                 f1_best = f1
                 optimal_p = p
         print(f"optimal cut-off point: {optimal_p}")
-
-    while len(selected_indices) < args.budget:
-        break
-        # TODO
     selected_indices = [candidate_indices[idx] for idx in selected_indices]
     return selected_indices

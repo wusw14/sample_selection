@@ -35,8 +35,8 @@ for dataset in dataset_list:
     f1_list = []
     dataset = dataset_dict.get(dataset, dataset)
     for llm in ["llama2-7b", "llama2-13b", "llama2-70b"]:
-        for k in [6, 8, 10]:
-            filename = f"{result_dir}/{dataset}/{method}_{k}_{llm}.csv"
+        for k in [6, 8, 10][-1:]:
+            filename = f"{result_dir}/{dataset}/{method}_{llm}.csv"
             if os.path.exists(filename) == False:
                 f1_list.append("--")
                 continue

@@ -54,6 +54,7 @@ def parse_args():
     parser.add_argument("--neg_num", type=int, default=3)
     parser.add_argument("--p", type=float, default=1.0)
     parser.add_argument("--beam_size", type=int, default=3)
+    parser.add_argument("--eval_size", type=int, default=20)
     args = parser.parse_args()
 
     dataset_dict = {
@@ -112,6 +113,8 @@ if __name__ == "__main__":
     print(f"PID {os.getpid()}\n\n")
     print(args, "\n\n")
     np.random.seed(args.seed)
+    if args.beam_size == 1:
+        exit()
 
     data_dir = args.data_dir.replace("data", f"new_data/{args.version}")
     if os.path.exists(data_dir) is False:
@@ -174,7 +177,7 @@ if __name__ == "__main__":
 
     df_new = pd.DataFrame(
         {
-            "budget": [args.budget] * len(selected_indices),
+            "k": [args.k] * len(selected_indices),
             "index": selected_indices,
             "label": selected_labels,
         }

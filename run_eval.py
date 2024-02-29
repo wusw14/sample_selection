@@ -53,105 +53,42 @@ cnt, iter_num = 0, 0
 #         time.sleep(np.random.randint(10, 20))
 #     if iter_num % 12 == 0:
 #         print(f"{iter_num//12} hours passed")
-#     if cnt > 10:
+#     if cnt > 2:
 #         break
 
 batch_size = 1
 serialization = "s6"
+selection_method = "ideal"
+k = 10
 
-for beam_size in [5, 1, 2, 3, 4, 6, 8]:
-    # for beam_size in [5]:  # [1, 2, 3, 4, 6, 8]:
-    for p in [0.7, 0.8, 0.9, 1.0][-1:]:
-        args.version = f"0131_SRL6_BS{beam_size}_V3"
+for budget in [50, 20, 30, 40, 60, 70]:
+    args.version = f"0229_V2_B{budget}_K{k}"
+    for mode in ["select", "inference"]:
         for dataset in dataset_list:
-            for selection_method in [
-                "MFL",
-                "fast_votek",
-                "min_entropy",
-                "max_entropy",
-                "cbs_maxIG",
-                "votek",
-                "adaicl",
-                "our",
-                "our_pairwise",
-                "our_progressive",
-                "ideal",
-            ][-1:]:
-                for budget in [6, 8, 10, 20, 30, 40, 50]:
-                    if selection_method not in ["votek", "adaicl"] and budget < 50:
-                        continue
-                    for lm in ["llama2-7b", "llama2-13b", "llama2-70b"]:
-                        if lm != args.lm:
-                            continue
-                        if (
-                            selection_method in ["MFL", "fast_votek"]
-                            and lm != "llama2-70b"
-                        ):
-                            continue
-                        if (
-                            os.path.exists(f"logs/select_{args.version}/{dataset}")
-                            is False
-                        ):
-                            os.makedirs(f"logs/select_{args.version}/{dataset}")
-                        if os.path.exists(
-                            f"logs/select_{args.version}/{dataset}/{selection_method}_{budget}_{lm}.log"
-                        ):
-                            continue
-                        cmd = (
-                            f"CUDA_VISIBLE_DEVICES={gpus} "
-                            f"python -u main.py --lm {lm} --gpus {gpus} --dataset {dataset} "
-                            f"--selection_method {selection_method} "
-                            f"--budget {budget} --batch_size {batch_size} "
-                            f"--version {args.version} --order o7 "
-                            f"--serialization {serialization} "
-                            f"--beam_size {beam_size} "
-                            f"--p {p} "
-                            f" >> logs/select_{args.version}/{dataset}/{selection_method}_{budget}_{lm}.log"
-                        )
-                        print(cmd)
-                        os.system(cmd)
-                        # time.sleep(60)
-
-        for budget in [10, 8, 6][:2]:
-            for dataset in dataset_list:
-                for selection_method in [
-                    "MFL",
-                    "fast_votek",
-                    "min_entropy",
-                    "max_entropy",
-                    "cbs_maxIG",
-                    "votek",
-                    "adaicl",
-                    "our",
-                    "our_pairwise",
-                    "our_progressive",
-                    "ideal",
-                ][-1:]:
-                    # for budget in [6, 8, 10]:
-                    for lm in ["llama2-7b", "llama2-13b", "llama2-70b"]:
-                        if lm != args.lm:
-                            continue
-                        if (
-                            os.path.exists(f"logs/inference_{args.version}/{dataset}")
-                            is False
-                        ):
-                            os.makedirs(f"logs/inference_{args.version}/{dataset}")
-                        if os.path.exists(
-                            f"logs/inference_{args.version}/{dataset}/{selection_method}_{budget}_{lm}.log"
-                        ):
-                            continue
-                        cmd = (
-                            f"CUDA_VISIBLE_DEVICES={gpus} "
-                            f"python -u evaluate.py --lm {lm} --gpus {gpus} --dataset {dataset} "
-                            f"--selection_method {selection_method} "
-                            f"--budget {budget} --batch_size {batch_size} "
-                            f"--version {args.version} --order o7 "
-                            f"--serialization {serialization} "
-                            f" >> logs/inference_{args.version}/{dataset}/{selection_method}_{budget}_{lm}.log"
-                        )
-                        print(cmd)
-                        os.system(cmd)
-                        # time.sleep(60)
+            for lm in ["llama2-7b", "llama2-13b", "llama2-70b"]:
+                if lm != args.lm:
+                    continue
+                if os.path.exists(f"logs/{mode}_{args.version}/{dataset}") is False:
+                    os.makedirs(f"logs/{mode}_{args.version}/{dataset}")
+                if os.path.exists(
+                    f"logs/{mode}_{args.version}/{dataset}/{selection_method}_{lm}.log"
+                ):
+                    continue
+                if mode == "select":
+                    run_file = "main.py"
+                else:
+                    run_file = "evaluate.py"
+                cmd = (
+                    f"CUDA_VISIBLE_DEVICES={gpus} "
+                    f"python -u {run_file} --lm {lm} --gpus {gpus} --dataset {dataset} "
+                    f"--selection_method {selection_method} "
+                    f"--budget {budget} --k {k} --batch_size {batch_size} "
+                    f"--version {args.version} --order o7 "
+                    f"--serialization {serialization} "
+                    f" >> logs/{mode}_{args.version}/{dataset}/{selection_method}_{lm}.log"
+                )
+                print(cmd)
+                os.system(cmd)
 
 if args.lm == "llama2-70b":
     cmd = f"CUDA_VISIBLE_DEVICES={gpus} python -u inference.py"

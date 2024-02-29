@@ -66,8 +66,9 @@ for dataset in dataset_list:
         "adaicl",
         "our",
         "our_base",
-    ][-2:-1]:
-        for budget in [6, 8, 10, 20, 30, 40, 50]:
+        "max_entropy_bl_sampling_wm",
+    ][-1:]:
+        for budget in [6, 8, 10, 20, 30, 40, 50, 100][-1:]:
             if (
                 selection_method
                 in [
@@ -82,7 +83,7 @@ for dataset in dataset_list:
                 and budget < 50
             ):
                 continue
-            for lm in ["llama2-7b", "llama2-13b", "llama2-70b"]:
+            for lm in ["llama2-7b", "llama2-13b", "llama2-70b"][-1:]:
                 if selection_method in ["MFL", "fast_votek"] and lm != "llama2-70b":
                     continue
                 if os.path.exists(f"logs/select_{args.version}/{dataset}") is False:
