@@ -47,6 +47,7 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--pos_num", type=int, default=3)
     parser.add_argument("--neg_num", type=int, default=3)
+    parser.add_argument("--eval_size", type=int, default=20)
     args = parser.parse_args()
 
     dataset_dict = {

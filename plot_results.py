@@ -42,8 +42,8 @@ for dataset in dataset_list:
     dataset = dataset_dict.get(dataset, dataset)
 
     fig = plt.figure(figsize=(10, 3))
-    for k in [6, 8, 10]:
-        filename = f"{file_dir}/{dataset}/{method}_{k}_llama2-{llm_size}b.csv"
+    for k in [6, 8, 10][-1:]:
+        filename = f"{file_dir}/{dataset}/{method}_llama2-{llm_size}b.csv"
         if os.path.exists(filename) == False:
             continue
         df = pd.read_csv(filename)

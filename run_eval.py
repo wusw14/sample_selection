@@ -61,8 +61,8 @@ serialization = "s6"
 selection_method = "ideal"
 k = 10
 
-for budget in [50, 20, 30, 40, 60, 70]:
-    args.version = f"0229_V2_B{budget}_K{k}"
+for budget in [50, 20, 30, 40, 60]:
+    args.version = f"0303_B{budget}_K{k}"
     for mode in ["select", "inference"]:
         for dataset in dataset_list:
             for lm in ["llama2-7b", "llama2-13b", "llama2-70b"]:
@@ -85,6 +85,7 @@ for budget in [50, 20, 30, 40, 60, 70]:
                     f"--budget {budget} --k {k} --batch_size {batch_size} "
                     f"--version {args.version} --order o7 "
                     f"--serialization {serialization} "
+                    f"--eval_size {budget}"
                     f" >> logs/{mode}_{args.version}/{dataset}/{selection_method}_{lm}.log"
                 )
                 print(cmd)
