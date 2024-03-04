@@ -12,17 +12,6 @@ from scipy.stats import rankdata
 from sklearn.metrics import f1_score
 
 
-def agg_probs(prob_reps, window=2):
-    prob_reps = np.array(prob_reps)[:, -window:]
-    T = len(prob_reps[0])
-    # weighted average of prob_reps
-    weights = np.array([1.0 / 2 ** (T - i) for i in range(T)])
-    weights = weights / np.sum(weights)
-    wt_prob_reps = prob_reps * weights[None,]
-    wt_probs = np.sum(wt_prob_reps, axis=1)
-    return prob_reps, wt_prob_reps, wt_probs
-
-
 def cal_cosine_sim(args):
     data_dir = args.data_dir.replace("data", "temp_data")
     embeddingsA = np.loadtxt(f"{data_dir}/train_A_emb.npy")
@@ -34,10 +23,11 @@ def cal_cosine_sim(args):
 
 
 def stratified_sampling(inputs, labels, embeddings, cosine_of_each_pair, args):
-    budget = 100
+    budget = 5 * args.budget
+    if len(labels) <= budget:
+        return inputs, labels, embeddings, list(range(len(inputs))), cosine_of_each_pair
     # by cosine similarity and null values distribution
     df = pd.DataFrame({"id": list(range(len(inputs))), "score": cosine_of_each_pair})
-    # bin_num = budget // 5
     bin_num = budget
     df["group"] = pd.cut(df["score"], bins=bin_num, labels=list(range(bin_num)))
     group_id, _ = zip(
@@ -48,8 +38,8 @@ def stratified_sampling(inputs, labels, embeddings, cosine_of_each_pair, args):
     )
     group_num = len(group_id)
     sample_indices = []
-    for i in range(group_num):
-        df_sub = df[df.group == i]
+    for i, gid in enumerate(group_id):
+        df_sub = df[df.group == gid]
         if len(df_sub) == 0:
             continue
         n = (budget - len(sample_indices)) // (group_num - i)
@@ -144,23 +134,6 @@ def select_next(
             )
             uncertain_indices = list(uncertain_indices) + top_indices
         print(f"uncertain_indices: {uncertain_indices}")
-        # budget1 = args.eval_size // 2
-        # sample_indices_p1, _ = sampling(
-        #     historical_probs,
-        #     np.where(cond1)[0],
-        #     None,
-        #     n=budget1,
-        #     type="covered_by_rep",
-        # )
-        # budget2 = args.eval_size - len(sample_indices_p1)
-        # sample_indices_p2, _ = sampling(
-        #     historical_probs,
-        #     np.where(cond2)[0],
-        #     None,
-        #     n=budget2,
-        #     type="covered_by_rep",
-        # )
-        # sample_indices = list(sample_indices_p1) + list(sample_indices_p2)
         sample_indices, _ = sampling(
             historical_probs,
             np.where(cond1 | cond2)[0],
@@ -168,7 +141,7 @@ def select_next(
             n=args.eval_size,
             type="covered_by_rep",
         )
-        print(f"### eval indices: {sample_indices}")
+        print(f"### eval indices: {list(sample_indices)}")
         labeled_eval = labeled_set.union(set(uncertain_indices)) - set(selected_indices)
         print("labeled_eval", labeled_eval)
         index, info_dict = max_info_gain(
@@ -237,34 +210,7 @@ def sampling(
             selected_indices.append(indices[np.argmin(dist)])
         return selected_indices, np.ones(len(selected_indices))
     elif type == "coverage":
-        # partition into bins based on the recent confs
-        candidate_confs = conf_func(candidate_probs)
-        print(
-            f"max conf: {np.max(candidate_confs):.4f}, "
-            f"min conf: {np.min(candidate_confs):.4f}"
-        )
-        df_confs = pd.DataFrame({"id": indices, "conf": candidate_confs})
-        df_confs["group"] = pd.cut(df_confs["conf"], bins=n, labels=list(range(n)))
-        i = 0
-        while i < n:
-            if len(df_confs) <= n - i:
-                selected_indices += df_confs.id.tolist()
-                break
-            df_sub = df_confs[df_confs.group == i]
-            if len(df_sub) == 0:
-                df_confs = df_confs[df_confs.group > i]
-                if len(df_confs) == 0:
-                    break
-                df_confs["group"] = pd.cut(
-                    df_confs["conf"], bins=n - i, labels=list(np.arange(i, n))
-                )
-                continue
-            cand_indices = df_sub.id.tolist()
-            cand_reps = reps[cand_indices]
-            # select the centroid one
-            dist_bw_cand = np.sum(distance_matrix(cand_reps, cand_reps, p=1), 1)
-            selected_indices.append(cand_indices[np.argmin(dist_bw_cand)])
-            i += 1
+        selected_indices = coverage(indices, candidate_probs, candidate_reps, n)
     elif type == "coverage_by_conf":
         selected_indices = coverage_by_conf(candidate_probs, candidate_reps, n)
     elif type == "covered_by_rep":
@@ -407,6 +353,38 @@ def coverage_by_rep(probs, reps, n, selected_indices_org, labeled_indices):
     )
     sample_list = list(set(sample_list) - set(labeled_indices))
     return sample_list
+
+
+def coverage(indices, candidate_probs, reps, n):
+    # partition into bins based on the recent confs
+    candidate_confs = conf_func(candidate_probs)
+    print(
+        f"max conf: {np.max(candidate_confs):.4f}, "
+        f"min conf: {np.min(candidate_confs):.4f}"
+    )
+    df_confs = pd.DataFrame({"id": indices, "conf": candidate_confs})
+    df_confs["group"] = pd.cut(df_confs["conf"], bins=n, labels=list(range(n)))
+    i = 0
+    while i < n:
+        if len(df_confs) <= n - i:
+            selected_indices += df_confs.id.tolist()
+            break
+        df_sub = df_confs[df_confs.group == i]
+        if len(df_sub) == 0:
+            df_confs = df_confs[df_confs.group > i]
+            if len(df_confs) == 0:
+                break
+            df_confs["group"] = pd.cut(
+                df_confs["conf"], bins=n - i, labels=list(np.arange(i, n))
+            )
+            continue
+        cand_indices = df_sub.id.tolist()
+        cand_reps = reps[cand_indices]
+        # select the centroid one
+        dist_bw_cand = np.sum(distance_matrix(cand_reps, cand_reps, p=1), 1)
+        selected_indices.append(cand_indices[np.argmin(dist_bw_cand)])
+        i += 1
+    return selected_indices
 
 
 def conf_func(prob):
