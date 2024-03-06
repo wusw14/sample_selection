@@ -14,18 +14,18 @@ from sklearn.metrics import f1_score
 
 def cal_cosine_sim(args):
     data_dir = args.data_dir.replace("data", "temp_data")
-    embeddingsA = np.loadtxt(f"{data_dir}/train_A_emb.npy")
-    embeddingsB = np.loadtxt(f"{data_dir}/train_B_emb.npy")
-    embeddingsA = embeddingsA / np.linalg.norm(embeddingsA, axis=1, keepdims=True)
-    embeddingsB = embeddingsB / np.linalg.norm(embeddingsB, axis=1, keepdims=True)
-    cosine_sim = np.sum(embeddingsA * embeddingsB, axis=1)
+    embsA = np.loadtxt(f"{data_dir}/train_A_emb.npy")
+    embsB = np.loadtxt(f"{data_dir}/train_B_emb.npy")
+    embsA = embsA / np.linalg.norm(embsA, axis=1, keepdims=True)
+    embsB = embsB / np.linalg.norm(embsB, axis=1, keepdims=True)
+    cosine_sim = np.sum(embsA * embsB, axis=1)
     return cosine_sim
 
 
-def stratified_sampling(inputs, labels, embeddings, cosine_of_each_pair, args):
-    budget = 5 * args.budget
+def stratified_sampling(inputs, labels, embs, cosine_of_each_pair, args):
+    budget = 250
     if len(labels) <= budget:
-        return inputs, labels, embeddings, list(range(len(inputs))), cosine_of_each_pair
+        return inputs, labels, embs, list(range(len(inputs))), cosine_of_each_pair
     # by cosine similarity and null values distribution
     df = pd.DataFrame({"id": list(range(len(inputs))), "score": cosine_of_each_pair})
     bin_num = budget
@@ -49,12 +49,12 @@ def stratified_sampling(inputs, labels, embeddings, cosine_of_each_pair, args):
             sample_indices += df_sub.sample(n=n, random_state=args.seed)["id"].tolist()
     sample_inputs = [inputs[idx] for idx in sample_indices]
     sample_labels = [labels[idx] for idx in sample_indices]
-    sample_embeddings = [embeddings[idx] for idx in sample_indices]
+    sample_embs = [embs[idx] for idx in sample_indices]
     scores = [cosine_of_each_pair[idx] for idx in sample_indices]
     print(
         f"pos/neg in candidates: {sum(sample_labels)}/{len(sample_labels)-sum(sample_labels)}"
     )
-    return sample_inputs, sample_labels, sample_embeddings, sample_indices, scores
+    return sample_inputs, sample_labels, sample_embs, sample_indices, scores
 
 
 def select_next(
@@ -63,26 +63,19 @@ def select_next(
     tokenizer,
     inputs,
     labels,
-    embeddings,
+    embs,
     historical_probs,
     selected_indices,
     labeled_set,
     historical_info,  # [{}, {}] 0: pos, 1: neg
-    conf,
     args,
     next="pos",
 ):
     probs = np.array(historical_probs[-1])
     labels = np.array(labels)
-    conf_pos, conf_neg = [], []
-    for idx in selected_indices:
-        if labels[idx] == 1:
-            conf_pos.append(conf[idx])
-        else:
-            conf_neg.append(conf[idx])
-    conf[selected_indices] = 2
-    cond1 = (probs > 0.5) & (conf < 2)
-    cond2 = (probs <= 0.5) & (conf < 2)
+    conf = conf_func(probs)
+    cond1 = (probs > 0.5) & (probs <= 1)
+    cond2 = probs <= 0.5
     if next == "pos":
         cond = cond1
     else:
@@ -150,7 +143,7 @@ def select_next(
             tokenizer,
             inputs,
             labels,
-            embeddings,
+            embs,
             selected_indices,
             uncertain_indices,
             sample_indices,
@@ -328,7 +321,7 @@ def coverage_by_rep(probs, reps, n, selected_indices_org, labeled_indices):
             confs[selected_indices]
         )
         score = (
-            len(selected_indices) / n
+            10 * len(selected_indices) / n
             + covered_conf_range / org_conf_range
             + len(covered_set) / len(probs)
         )
@@ -345,12 +338,22 @@ def coverage_by_rep(probs, reps, n, selected_indices_org, labeled_indices):
             m -= 1
         else:
             break
-        if m in m_list or m < 1 or m >= len(probs):
+        if m in m_list or m < 1 or m > len(probs):
             break
     print(
-        f"covered_conf_range: {max_cover_range:.4f}, m: {best_m}, "
-        f"covered_ratio: {max_cover_ratio:.4f}, dist_thr: {best_dist_thr:.4f}"
+        f"covered_conf_range: {max_cover_range:.4f}, best_m: {best_m}, "
+        f"covered_ratio: {max_cover_ratio:.4f}, dist_thr: {best_dist_thr:.4f}, "
+        f"m_list: {m_list}"
     )
+    if len(sample_list) < n:
+        print(f"remaining budget: {n - len(sample_list)}")
+        print(f"sample_list (before): {len(sample_list)}")
+        sample_list += np.random.choice(
+            list(set(range(len(probs))) - set(sample_list)),
+            n - len(sample_list),
+            replace=False,
+        ).tolist()
+        print(f"sample_list (after): {len(sample_list)}")
     sample_list = list(set(sample_list) - set(labeled_indices))
     return sample_list
 
@@ -424,7 +427,7 @@ def max_info_gain(
     tokenizer,
     inputs,
     labels,
-    embeddings,
+    embs,
     selected_indices,
     uncertain_indices,
     sample_indices,
@@ -435,22 +438,22 @@ def max_info_gain(
     if len(uncertain_indices) == 1:
         return uncertain_indices[0]
 
-    example_inputs, example_labels, example_embeddings = [], [], []
+    inputs_of_E, labels_of_E, embs_of_E = [], [], []
     for idx in selected_indices:
-        example_inputs.append(inputs[idx])
-        example_labels.append(labels[idx])
-        example_embeddings.append(embeddings[idx])
+        inputs_of_E.append(inputs[idx])
+        labels_of_E.append(labels[idx])
+        embs_of_E.append(embs[idx])
 
-    sample_inputs, sample_embeddings = [], []
+    sample_inputs, sample_embs = [], []
     for idx in sample_indices:
         sample_inputs.append(inputs[idx])
-        sample_embeddings.append(embeddings[idx])
+        sample_embs.append(embs[idx])
 
-    labeled_inputs, labeled_embeddings, labeled_labels = [], [], []
+    labeled_inputs, labeled_embs, labeled_labels = [], [], []
     labeled_eval = list(labeled_eval)
     for idx in labeled_eval:
         labeled_inputs.append(inputs[idx])
-        labeled_embeddings.append(embeddings[idx])
+        labeled_embs.append(embs[idx])
         labeled_labels.append(labels[idx])
     labeled_labels = np.array(labeled_labels)
     print("labeled_labels", labeled_labels)
@@ -464,16 +467,16 @@ def max_info_gain(
     print(f"Original conf_p1: {conf_p1_avg:.4f}, conf_p2: {conf_p2_avg:.4f}")
     info_gain = []
     for i, idx in enumerate(uncertain_indices):
-        example_inputs.append(inputs[idx])
-        example_labels.append(labels[idx])
-        example_embeddings.append(embeddings[idx])
+        inputs_of_E.append(inputs[idx])
+        labels_of_E.append(labels[idx])
+        embs_of_E.append(embs[idx])
         # part 1: uncertainty calculation
         prompts = construct_prompt(
-            example_inputs,
-            example_labels,
-            example_embeddings,
+            inputs_of_E,
+            labels_of_E,
+            embs_of_E,
             sample_inputs,
-            sample_embeddings,
+            sample_embs,
             args,
         )
         _, probs_temp = inference(model_name, model, tokenizer, prompts, args)
@@ -486,11 +489,11 @@ def max_info_gain(
         # part 2: informativeness calculation
         if len(labeled_eval) > 0:
             prompts = construct_prompt(
-                example_inputs,
-                example_labels,
-                example_embeddings,
+                inputs_of_E,
+                labels_of_E,
+                embs_of_E,
                 labeled_inputs,
-                labeled_embeddings,
+                labeled_embs,
                 args,
             )
             _, labeled_probs = inference(model_name, model, tokenizer, prompts, args)
@@ -515,9 +518,9 @@ def max_info_gain(
             # f"pre: {pre:.2f}, rec: {rec:.2f}, f1: {f1:.2f}"
             f"CE_p1: {CE_pos:.4f}, CE_p2: {CE_neg:.4f}, CE_avg: {CE_avg:.4f} "
         )
-        del example_inputs[-1]
-        del example_labels[-1]
-        del example_embeddings[-1]
+        del inputs_of_E[-1]
+        del labels_of_E[-1]
+        del embs_of_E[-1]
     print(f"uncertain_indices: {uncertain_indices}")
     print(f"info_gain: {np.round(np.array(info_gain), 4)}")
     # normalize info_dict
@@ -529,13 +532,11 @@ def max_info_gain(
     return uncertain_indices[np.argmax(info_gain)], info_dict
 
 
-def select_by_cosine_sim(
-    model_name, model, tokenizer, inputs, labels, embeddings, args
-):
+def select_by_cosine_sim(model_name, model, tokenizer, inputs, labels, embs, args):
     # sample by cosine similarity
     cosine_of_each_pair = cal_cosine_sim(args)
-    inputs, labels, embeddings, candidate_indices, scores = stratified_sampling(
-        inputs, labels, embeddings, cosine_of_each_pair, args
+    inputs, labels, embs, candidate_indices, scores = stratified_sampling(
+        inputs, labels, embs, cosine_of_each_pair, args
     )
     print(f"candidates: {len(inputs)}")
     labels, candidate_indices, scores = zip(
@@ -559,20 +560,55 @@ def select_by_cosine_sim(
     return selected_indices
 
 
-def ideal(model_name, model, tokenizer, inputs, labels, embeddings, args):
+def determine_next_target(labels_of_E, selected_indices, probs, labeled_set, labels):
+    pos_neg_diff = 2 * np.sum(labels_of_E) - len(labels_of_E)
+    if pos_neg_diff < 0:
+        next = "pos"
+    elif pos_neg_diff > 0:
+        next = "neg"
+    else:
+        if np.sum(probs > 0.5) == np.sum(labels_of_E):
+            next = "pos"
+        elif np.sum(probs <= 0.5) == len(labels_of_E) - np.sum(labels_of_E):
+            next = "neg"
+        else:
+            labeled_eval = list(labeled_set - set(selected_indices))
+            if len(labeled_eval) == 0:
+                next = "pos"
+            else:
+                eval_labels = np.array(labels)[labeled_eval]
+                eval_pseudo = np.array(probs[labeled_eval] > 0.5, dtype=int)
+                scores = (eval_labels == eval_pseudo).astype(int)
+                pos_avg = np.mean(scores[eval_labels == 1])
+                neg_avg = np.mean(scores[eval_labels == 0])
+                if np.sum(eval_labels) == 0:
+                    pos_avg = 0.5
+                if np.sum(eval_labels) == len(eval_labels):
+                    neg_avg = 0.5
+                if pos_avg > neg_avg:
+                    next = "neg"
+                else:
+                    next = "pos"
+                print(f"pos_avg: {pos_avg:.4f}, neg_avg: {neg_avg:.4f} => next: {next}")
+    return next
+
+
+def ideal(model_name, model, tokenizer, inputs, labels, embs, args):
     # sample by cosine similarity
     cosine_of_each_pair = cal_cosine_sim(args)
-    inputs, labels, embeddings, candidate_indices, scores = stratified_sampling(
-        inputs, labels, embeddings, cosine_of_each_pair, args
+    inputs, labels, embs, candidate_indices, scores = stratified_sampling(
+        inputs, labels, embs, cosine_of_each_pair, args
     )
+    unselected_indices = list(range(len(labels)))
     print(f"candidates: {len(inputs)}")
     # warm up with the sample with the highest and lowest cosine similarity score
-    example_inputs, example_labels, example_embeddings = [], [], []
+    inputs_of_E, labels_of_E, embs_of_E = [], [], []
     selected_indices = [np.argmax(scores), np.argmin(scores)]
     for idx in selected_indices:
-        example_inputs.append(inputs[idx])
-        example_labels.append(labels[idx])
-        example_embeddings.append(embeddings[idx])
+        inputs_of_E.append(inputs[idx])
+        labels_of_E.append(labels[idx])
+        embs_of_E.append(embs[idx])
+        del unselected_indices[unselected_indices.index(idx)]
 
     # iterative sampling by confidence
     historical_info = [defaultdict(list), defaultdict(list)]
@@ -580,122 +616,88 @@ def ideal(model_name, model, tokenizer, inputs, labels, embeddings, args):
     labeled_set = set(selected_indices)
 
     while len(selected_indices) < args.k:
-        if len(selected_indices) < 4:
-            args.beam_size = 2 * args.budget // args.k - 1
-        else:
-            args.beam_size = (args.budget - len(labeled_set)) // (
-                args.k - len(selected_indices)
-            )
-        pos_neg_diff = 2 * np.sum(example_labels) - len(example_labels)
-        print(f"****************")
-        print(f"iteration {len(selected_indices) + 1}\n beam size: {args.beam_size}")
+        print(f"\n\n****************iteration {len(selected_indices) + 1}")
+
+        # LLM's predictions based on selected examples $\mathbf{E}$
+        inputs_of_U, embs_of_U = [], []
+        for idx in unselected_indices:
+            inputs_of_U.append(inputs[idx])
+            embs_of_U.append(embs[idx])
         prompts = construct_prompt(
-            example_inputs, example_labels, example_embeddings, inputs, embeddings, args
+            inputs_of_E, labels_of_E, embs_of_E, inputs_of_U, embs_of_U, args
         )
         print(prompts[0])
         print("---------------\n\n")
         _, probs = inference(model_name, model, tokenizer, prompts, args)
 
-        # calculate unselcted pairs
-        unselected_indices = list(set(range(len(labels))) - set(selected_indices))
-        unselected_probs = np.array(probs)[unselected_indices]
-        unselected_labels = np.array(labels.copy())[unselected_indices]
-        precision, recall, f1 = evaluate(unselected_labels, unselected_probs > 0.5)
-        print(f"Precision {precision:.2f} Recall {recall:.2f} F1 {f1:.2f}")
+        # evaluate the performance of the current model
+        labels_of_U = np.array(labels.copy())[unselected_indices]
+        precision, recall, f1 = evaluate(labels_of_U, np.array(probs) > 0.5)
+        print(f"[Eval]: Precision {precision:.2f} Recall {recall:.2f} F1 {f1:.2f}")
 
-        probs = np.array(probs)
-        probs = np.clip(probs, 1e-6, 1 - 1e-6)
-        historical_probs.append(probs)  # [T, N]
-        conf = conf_func(probs)
+        # update the historical information
+        probs = np.clip(np.array(probs), 1e-6, 1 - 1e-6)
+        probs_N = np.ones(len(labels)) * 2
+        probs_N[unselected_indices] = probs
+        historical_probs.append(probs_N)  # [T, N]
 
-        if pos_neg_diff < 0:
-            next = "pos"
-        elif pos_neg_diff > 0:
-            next = "neg"
+        # Selection of the next example
+        ## budget allocation
+        if len(selected_indices) < 4:
+            args.beam_size = 2 * args.budget // args.k - 1
         else:
-            if np.sum(probs > 0.5) == np.sum(example_labels):
-                next = "pos"
-            elif np.sum(probs <= 0.5) == len(example_labels) - np.sum(example_labels):
-                next = "neg"
-            else:
-                labeled_eval = list(labeled_set - set(selected_indices))
-                if len(labeled_eval) == 0:
-                    next = "pos"
-                else:
-                    eval_labels = np.array(labels)[labeled_eval]
-                    eval_pseudo = np.array(probs[labeled_eval] > 0.5, dtype=int)
-                    scores = (eval_labels == eval_pseudo).astype(int)
-                    pos_avg = np.mean(scores[eval_labels == 1])
-                    neg_avg = np.mean(scores[eval_labels == 0])
-                    if np.sum(eval_labels) == 0:
-                        pos_avg = 0.5
-                    if np.sum(eval_labels) == len(eval_labels):
-                        neg_avg = 0.5
-                    if pos_avg > neg_avg:
-                        next = "neg"
-                    else:
-                        next = "pos"
-                    print(
-                        f"pos_avg: {pos_avg:.4f}, neg_avg: {neg_avg:.4f} => next: {next}"
-                    )
+            args.beam_size = np.ceil(
+                (args.budget - len(labeled_set)) / (args.k - len(selected_indices))
+            ).astype(int)
+
+        ### next target
+        next = determine_next_target(
+            labels_of_E, selected_indices, probs_N, labeled_set, labels
+        )
         idx, labeled_indices, historical_info = select_next(
             model_name,
             model,
             tokenizer,
             inputs,
             labels,
-            embeddings,
+            embs,
             historical_probs,
             selected_indices,
             labeled_set,
             historical_info,
-            conf,
             args,
             next=next,
         )
-        selected_indices.append(idx)
-        example_inputs.append(inputs[idx])
-        example_labels.append(labels[idx])
-        example_embeddings.append(embeddings[idx])
-        labeled_set = labeled_set.union(set(labeled_indices))
-        print(f"index: {idx}, label: {labels[idx]}, pred: {probs[idx]:.2f}")
 
         probs_output = [f"{v:.4f}" for v in probs]
-        result = [v for v in zip(range(len(labels)), labels, probs_output)]
+        result = [v for v in zip(unselected_indices, labels_of_U, probs_output)]
         print(result)
-        print(f"****************\n\n")
-        print("selected indices:", selected_indices)
-        print("labels of selected:", example_labels)
 
-    labeled_eval = set(labeled_set) - set(selected_indices)
-    print("labeled_eval", labeled_eval)
-    if len(labeled_eval) > 0:
-        labeled_inputs, labeled_embeddings, labeled_labels = [], [], []
-        for idx in labeled_eval:
-            labeled_inputs.append(inputs[idx])
-            labeled_embeddings.append(embeddings[idx])
-            labeled_labels.append(labels[idx])
-        prompts = construct_prompt(
-            example_inputs,
-            example_labels,
-            example_embeddings,
-            labeled_inputs,
-            labeled_embeddings,
-            args,
+        # update the variables
+        del unselected_indices[unselected_indices.index(idx)]
+        selected_indices.append(idx)
+        inputs_of_E.append(inputs[idx])
+        labels_of_E.append(labels[idx])
+        embs_of_E.append(embs[idx])
+        labeled_set = labeled_set.union(set(labeled_indices))
+        print(f"index: {idx}, label: {labels[idx]}, pred: {probs_N[idx]:.2f}")
+        print(
+            f"****************\n"
+            f"selected indices: {selected_indices}\n"
+            f"labels of selected: {labels_of_E}"
         )
-        _, labeled_probs = inference(model_name, model, tokenizer, prompts, args)
-        labeled_probs = np.array(labeled_probs)
-        # find cut-off point to maximize F1 on labeled
-        optimal_p = 0.5
-        _, _, f1_best = evaluate(labeled_labels, labeled_probs > 0.5)
-        for p in np.arange(0.3, 0.8, 0.1):
-            precision, recall, f1 = evaluate(labeled_labels, labeled_probs > p)
-            print(
-                f"p: {p:.2f}, Precision {precision:.2f} Recall {recall:.2f} F1 {f1:.2f}"
-            )
-            if f1 > f1_best:
-                f1_best = f1
-                optimal_p = p
-        print(f"optimal cut-off point: {optimal_p}")
+
+        # unselected_indices, _ = sampling(
+        #     historical_probs,
+        #     unselected_indices,
+        #     None,
+        #     n=max(args.budget * 5, len(unselected_indices) // 2),
+        #     type="covered_by_rep",
+        # )
+        # unselected_indices = list(
+        #     set(unselected_indices).union(set(labeled_set)) - set(selected_indices)
+        # )
+        # unselected_indices = list(unselected_indices)
+
     selected_indices = [candidate_indices[idx] for idx in selected_indices]
     return selected_indices
