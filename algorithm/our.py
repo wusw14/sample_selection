@@ -518,6 +518,7 @@ def max_info_gain(
         labeled_labels,
     )
     best_sample = None
+    hist_no_imp, hist_best = 0, 0
     info_gain = []
     for i, idx in enumerate(candidate_indices):
         inputs_of_E.append(inputs[idx])
@@ -564,8 +565,17 @@ def max_info_gain(
         del inputs_of_E[-1]
         del labels_of_E[-1]
         del embs_of_E[-1]
-        if best_sample is not None and len(info_gain) >= len(uncertain_indices):
+        if best_sample is not None and len(info_gain) >= 2 * len(uncertain_indices):
             break
+        if len(info_gain) > len(uncertain_indices):
+            if score > hist_best:
+                hist_best = score
+                hist_no_imp = 0
+            else:
+                hist_no_imp += 1
+                if hist_no_imp >= 3:
+                    print(f"Early stopping ...")
+                    break
     print(f"candidate_indices: {uncertain_indices}")
     print(f"info_gain: {np.round(np.array(info_gain), 4)}")
     # normalize info_dict
