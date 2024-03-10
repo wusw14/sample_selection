@@ -108,10 +108,18 @@ def select_next(
                 # uncertain_indices = list(uncertain_indices) + top_indices
                 labeled_set = labeled_set.union(set(uncertain_indices_part))
                 uncertain_indices_all.extend(list(uncertain_indices_part))
-                if np.sum(
+                xor_sum = np.sum(
                     labels[uncertain_indices_part] * next
                     + (1 - labels[uncertain_indices_part]) * (1 - next)
-                ) == 0 and args.budget < len(labeled_set):
+                )
+                print(
+                    f"debug: uncertain_indices_part: {uncertain_indices_part} "
+                    f"next: {next} "
+                    f"args.budget: {args.budget} num of labeled set: {len(labeled_set)}"
+                    f" labels: {labels[uncertain_indices_part]} "
+                    f" xor_sum: {xor_sum}"
+                )
+                if xor_sum == 0 and args.budget > len(labeled_set):
                     args.beam_size = min(args.beam_size, args.budget - len(labeled_set))
                 else:
                     break
