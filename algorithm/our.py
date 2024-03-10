@@ -23,7 +23,7 @@ def cal_cosine_sim(args):
 
 
 def stratified_sampling(inputs, labels, embs, cosine_of_each_pair, args):
-    budget = 250
+    budget = args.sample_size
     if len(labels) <= budget:
         return inputs, labels, embs, list(range(len(inputs))), cosine_of_each_pair
     # by cosine similarity and null values distribution
@@ -69,7 +69,7 @@ def select_next(
     labeled_set,
     historical_info,  # [{}, {}] 0: pos, 1: neg
     args,
-    next="pos",
+    next=1,
     no_improvement=0,
 ):
     probs = np.array(historical_probs[-1])
@@ -95,45 +95,34 @@ def select_next(
         index = uncertain_indices[np.argmax(conf[uncertain_indices])]
         uncertain_indices = [index]
     else:
-        if len(uncertain_indices) > args.beam_size:
-            # false_indices = []
-            # if next == 1:
-            #     info_dict = historical_info[0]
-            # else:
-            #     info_dict = historical_info[1]
-            # # get top from info_dict
-            # if len(info_dict) > 0:
-            #     top_indices, _ = zip(
-            #         *sorted(
-            #             info_dict.items(),
-            #             key=lambda x: np.mean(x[-1]),
-            #             reverse=True,
-            #         )
-            #     )
-            #     for idx in top_indices[args.beam_size :]:
-            #         if int(probs[idx] > 0.5) != int(next == 1):
-            #             false_indices.append(idx)
-            #         if len(false_indices) >= args.beam_size:
-            #             break
-            #     top_indices = list(top_indices)[: args.beam_size] + false_indices
-            # else:
-            #     top_indices = []
-            # print(f"*** top_indices: {top_indices}, false_indices: {false_indices}")
-            uncertain_indices, _ = sampling(
-                historical_probs,
-                uncertain_indices,
-                [[], labeled_set],
-                n=args.beam_size,
-                type="covered_by_rep",
-            )
-            # uncertain_indices = list(uncertain_indices) + top_indices
+        uncertain_indices_all = []
+        while True:
+            if len(uncertain_indices) > args.beam_size:
+                uncertain_indices_part, _ = sampling(
+                    historical_probs,
+                    uncertain_indices,
+                    [[], labeled_set],
+                    n=args.beam_size,
+                    type="covered_by_rep",
+                )
+                # uncertain_indices = list(uncertain_indices) + top_indices
+                labeled_set = labeled_set.union(set(uncertain_indices_part))
+                uncertain_indices_all.extend(list(uncertain_indices_part))
+                if np.sum(
+                    labels[uncertain_indices_part] * next
+                    + (1 - labels[uncertain_indices_part]) * (1 - next)
+                ) == 0 and args.budget < len(labeled_set):
+                    args.beam_size = min(args.beam_size, args.budget - len(labeled_set))
+                else:
+                    break
+        uncertain_indices = list(uncertain_indices_all)
         print(f"uncertain_indices: {uncertain_indices}")
         eval_indices, _ = sampling(
             historical_probs,
             np.where(cond1 | cond2)[0],
             None,
             n=args.eval_size,
-            type="covered_by_rep",
+            type="MFL",
         )
         print(f"### eval indices: {list(eval_indices)}")
         labeled_eval = labeled_set.union(set(uncertain_indices)) - set(selected_indices)
@@ -142,14 +131,21 @@ def select_next(
             info_dict = historical_info[0]
         else:
             info_dict = historical_info[1]
+
+        hist_indices_F, hist_indices_T = [], []
         if len(info_dict) > 0:
-            hist_indices, _ = zip(
+            hist_indices_org, _ = zip(
                 *sorted(info_dict.items(), key=lambda x: np.mean(x[-1]), reverse=True)
             )
+            hist_indices_F, hist_indices_T = [], []
+            for hist_idx in hist_indices_org:
+                if labels[hist_idx] != (probs[hist_idx] > 0.5):
+                    hist_indices_F.append(hist_idx)
+                else:
+                    hist_indices_T.append(hist_idx)
             if no_improvement >= 2:
-                hist_indices = hist_indices[:2]
-        else:
-            hist_indices = []
+                hist_indices_T = hist_indices_T[:2]
+                hist_indices_F = hist_indices_F[:2]
         index, info_dict = max_info_gain(
             model_name,
             model,
@@ -158,8 +154,8 @@ def select_next(
             labels,
             embs,
             selected_indices,
-            uncertain_indices,
-            hist_indices,
+            list(uncertain_indices) + list(hist_indices_F),
+            hist_indices_T,
             eval_indices,
             labeled_eval,
             probs,
@@ -217,6 +213,8 @@ def sampling(
             dist = dist[0]
             selected_indices.append(indices[np.argmin(dist)])
         return selected_indices, np.ones(len(selected_indices))
+    elif type == "MFL":
+        selected_indices = MFL(candidate_reps, n)
     elif type == "coverage":
         selected_indices = coverage(indices, candidate_probs, candidate_reps, n)
     elif type == "coverage_by_conf":
@@ -405,6 +403,27 @@ def coverage(indices, candidate_probs, reps, n):
     return selected_indices
 
 
+def MFL(reps, n):
+    dist = distance_matrix(reps, reps, p=1)  # [N, N]
+    sim_matrix = 1 - dist / np.max(dist)
+    similarity_to_labeled = np.array([-1.0] * len(dist))
+    selected_indices, scores = [], []
+    while len(selected_indices) < n:
+        max_score, idx = -1, -1
+        for i in range(len(reps)):
+            if i in selected_indices:
+                continue
+            value = sim_matrix[i] - similarity_to_labeled
+            score = np.sum(value[value > 0])
+            if score > max_score:
+                max_score = score
+                idx = i
+        selected_indices.append(idx)
+        similarity_to_labeled = np.maximum(similarity_to_labeled, sim_matrix[idx])
+        scores.append(max_score)
+    return selected_indices
+
+
 def conf_func(prob):
     # v1
     conf = np.maximum(prob, 1 - prob)
@@ -565,8 +584,6 @@ def max_info_gain(
         del inputs_of_E[-1]
         del labels_of_E[-1]
         del embs_of_E[-1]
-        if best_sample is not None and len(info_gain) >= 2 * len(uncertain_indices):
-            break
         if len(info_gain) > len(uncertain_indices):
             if score > hist_best:
                 hist_best = score
@@ -657,8 +674,20 @@ def ideal(model_name, model, tokenizer, inputs, labels, embs, args):
     unselected_indices = list(range(len(labels)))
     print(f"candidates: {len(inputs)}")
     # warm up with the sample with the highest and lowest cosine similarity score
+    labeled_set = set()
+    indices_by_scores = np.argsort(scores)[::-1]
+    for i in range(len(scores)):
+        labeled_set.add(indices_by_scores[i])
+        if labels[indices_by_scores[i]] == 1:
+            selected_indices = [indices_by_scores[i]]
+            break
+    for i in range(len(scores) - 1, -1, -1):
+        labeled_set.add(indices_by_scores[i])
+        if labels[indices_by_scores[i]] == 0:
+            selected_indices.append(indices_by_scores[i])
+            break
     inputs_of_E, labels_of_E, embs_of_E = [], [], []
-    selected_indices = [np.argmax(scores), np.argmin(scores)]
+    # selected_indices = [np.argmax(scores), np.argmin(scores)]
     for idx in selected_indices:
         inputs_of_E.append(inputs[idx])
         labels_of_E.append(labels[idx])
@@ -668,7 +697,7 @@ def ideal(model_name, model, tokenizer, inputs, labels, embs, args):
     # iterative sampling by confidence
     historical_info = [defaultdict(list), defaultdict(list)]
     historical_probs = []
-    labeled_set = set(selected_indices)
+    # labeled_set = set(selected_indices)
 
     no_improvement = 0
     while len(selected_indices) < args.k:
