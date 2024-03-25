@@ -55,6 +55,7 @@ def parse_args():
     parser.add_argument("--p", type=float, default=1.0)
     parser.add_argument("--beam_size", type=int, default=3)
     parser.add_argument("--eval_size", type=int, default=20)
+    parser.add_argument("--sample_size", type=int, default=20)
     args = parser.parse_args()
 
     dataset_dict = {
@@ -96,6 +97,9 @@ def initialization(args):
     train_entry_pairs, train_labels = load_data(
         args.data_dir, args.train_file, args.is_wdc
     )
+    if len(train_entry_pairs) <= args.sample_size:
+        print(f"same as the previous result")
+        exit()
     data_dir = args.data_dir.replace("data", "temp_data")
     embeddings = np.loadtxt(os.path.join(data_dir, "train_pair_emb.npy"))
     assert len(train_entry_pairs) == len(embeddings)
