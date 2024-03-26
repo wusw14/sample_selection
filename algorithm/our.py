@@ -100,7 +100,7 @@ def select_next(
         uncertain_indices = [index]
     else:
         uncertain_indices_all = []
-        while True:
+        for j in range(2):
             if len(uncertain_indices) > args.beam_size:
                 uncertain_indices_part, _ = sampling(
                     historical_probs,
@@ -530,7 +530,7 @@ def max_info_gain(
     else:
         labeled_eval_org = []
 
-    tau = np.ceil(np.log(len(uncertain_indices)) / np.log(4)).astype(int)
+    tau = np.ceil(len(candidate_indices) ** (1.0 / 3)).astype(int)
     print(f"********* tau: {tau}")
     unlabeled_pred, labeled_pred = {}, {}
     sample_indices_last, labeled_eval_last = [], []
