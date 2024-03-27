@@ -123,9 +123,9 @@ def select_next(
                     f" labels: {labels[uncertain_indices_part]} "
                     f" xor_sum: {xor_sum}"
                 )
-                if xor_sum < len(uncertain_indices_part) // 2 and args.budget > len(
-                    labeled_set
-                ):
+                if xor_sum < min(
+                    2, len(uncertain_indices_part) // 2
+                ) and args.budget > len(labeled_set):
                     args.beam_size = min(args.beam_size, args.budget - len(labeled_set))
                 else:
                     break
@@ -499,6 +499,7 @@ def max_info_gain(
     no_improvement,
     args,
 ):
+    pred_dict = {}
     labeled_eval_org = list(labeled_eval_org)
     hist_indices = []
     if no_improvement == False:
@@ -520,9 +521,9 @@ def max_info_gain(
         diff_scores, labeled_eval_tmp = [], []
         for idx in labeled_eval_org:
             diff_s = probs[idx] * labels[idx] + (1 - probs[idx]) * (1 - labels[idx])
-            if diff_s < 0.8:
-                diff_scores.append(diff_s)
-                labeled_eval_tmp.append(idx)
+            # if diff_s < 0.8:
+            diff_scores.append(diff_s)
+            labeled_eval_tmp.append(idx)
         print(
             f"debug+++ diff_scores: {diff_scores} labeled_eval_org: {labeled_eval_org}"
         )
@@ -714,12 +715,25 @@ def determine_next_target(labels_of_E, selected_indices, probs, labeled_set, lab
     return next
 
 
+def get_samples(inputs, labels, embs, candidate_indices, scores):
+    inputs = [inputs[idx] for idx in candidate_indices]
+    labels = [labels[idx] for idx in candidate_indices]
+    embs = [embs[idx] for idx in candidate_indices]
+    scores = [scores[idx] for idx in candidate_indices]
+    print(f"candiates: {len(inputs)}, pos/neg: {sum(labels)}/{len(labels)-sum(labels)}")
+    return inputs, labels, embs, scores
+
+
 def ideal(model_name, model, tokenizer, inputs, labels, embs, args):
     # sample by cosine similarity
     cosine_of_each_pair = cal_cosine_sim(args)
-    inputs, labels, embs, candidate_indices, scores = stratified_sampling(
-        inputs, labels, embs, cosine_of_each_pair, args
+    candidate_indices = MFL(np.reshape(cosine_of_each_pair, (-1, 1)), args.sample_size)
+    inputs, labels, embs, scores = get_samples(
+        inputs, labels, embs, candidate_indices, cosine_of_each_pair
     )
+    # inputs, labels, embs, candidate_indices, scores = stratified_sampling(
+    #     inputs, labels, embs, cosine_of_each_pair, args
+    # )
     unselected_indices = list(range(len(labels)))
     print(f"candidates: {len(inputs)}")
     # warm up with the sample with the highest and lowest cosine similarity score
