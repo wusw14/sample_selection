@@ -61,9 +61,9 @@ serialization = "s6"
 selection_method = "ideal"
 k = 10
 
-for sample_size in [200, 300, 400, 500, 600]:
+for sample_size in [400, 500, 600, 800, 1000]:
     for budget in [50, 20, 30, 40, 60][:1]:
-        args.version = f"0326_S{sample_size}_B{budget}_K{k}"
+        args.version = f"0328_S{sample_size}_B{budget}_K{k}"
         for mode in ["select", "inference"]:
             for dataset in dataset_list:
                 for lm in ["llama2-7b", "llama2-13b", "llama2-70b"]:
@@ -87,7 +87,7 @@ for sample_size in [200, 300, 400, 500, 600]:
                         f"--version {args.version} --order o7 "
                         f"--serialization {serialization} "
                         f"--eval_size 100 --sample_size {sample_size}"
-                        f" >> logs/{mode}_{args.version}/{dataset}/{selection_method}_{lm}.log"
+                        f" > logs/{mode}_{args.version}/{dataset}/{selection_method}_{lm}.log"
                     )
                     print(cmd)
                     os.system(cmd)

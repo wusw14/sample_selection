@@ -22,23 +22,20 @@
 
 # nohup python -u run_eval.py 4,5 --dataset WA > logs/45.log 2>&1 &
 
-# nohup python -u run_eval.py 6,7 llama2-70b --dataset BR FZ IA AG watches WA AB DA DS cameras shoes computers --version ideal > logs/67.log 2>&1 &
+# nohup python -u run_eval.py 6,7 llama2-70b --dataset BR WA DS AB DA FZ IA AG watches shoes cameras computers --version ideal > logs/67.log 2>&1 &
 # nohup python -u run_select.py 0,1,2,3,4,5 --dataset > logs/67.log 2>&1 &
-nohup python -u run_eval.py 0 llama2-7b --dataset BR FZ IA AG watches WA AB DA DS cameras shoes computers --version ideal > logs/0.log 2>&1 &
-nohup python -u run_eval.py 1 llama2-7b --dataset BR FZ IA AG watches WA AB DA DS cameras shoes computers --version ideal > logs/1.log 2>&1 &
-nohup python -u run_eval.py 0 llama2-13b --dataset BR FZ IA AG watches WA AB DA DS cameras shoes computers --version ideal > logs/00.log 2>&1 &
-nohup python -u run_eval.py 1 llama2-13b --dataset BR FZ IA AG watches WA AB DA DS cameras shoes computers --version ideal > logs/11.log 2>&1 &
-nohup python -u run_eval.py 2,3 llama2-70b --dataset BR FZ IA AG watches WA AB DA DS cameras shoes computers --version ideal > logs/23.log 2>&1 &
-nohup python -u run_eval.py 4,5 llama2-70b --dataset BR FZ IA AG watches WA AB DA DS cameras shoes computers --version ideal > logs/45.log 2>&1 &
-nohup python -u run_eval.py 6,7 llama2-70b --dataset BR FZ IA AG watches WA AB DA DS cameras shoes computers --version ideal > logs/67.log 2>&1 &
+nohup python -u run_eval.py 0 llama2-7b --dataset BR WA DS AB DA FZ IA AG watches shoes cameras computers --version ideal > logs/0.log 2>&1 &
+nohup python -u run_eval.py 1 llama2-7b --dataset BR WA DS AB DA FZ IA AG watches shoes cameras computers --version ideal > logs/1.log 2>&1 &
+nohup python -u run_eval.py 0 llama2-13b --dataset BR WA DS AB DA FZ IA AG watches shoes cameras computers --version ideal > logs/00.log 2>&1 &
+nohup python -u run_eval.py 1 llama2-13b --dataset BR WA DS AB DA FZ IA AG watches shoes cameras computers --version ideal > logs/11.log 2>&1 &
+nohup python -u run_eval.py 2,3 llama2-70b --dataset BR WA DS AB DA FZ IA AG watches shoes cameras computers --version ideal > logs/23.log 2>&1 &
+nohup python -u run_eval.py 4,5 llama2-70b --dataset BR WA DS AB DA FZ IA AG watches shoes cameras computers --version ideal > logs/45.log 2>&1 &
+nohup python -u run_eval.py 6,7 llama2-70b --dataset BR WA DS AB DA FZ IA AG watches shoes cameras computers --version ideal > logs/67.log 2>&1 &
 
-# nohup python -u run_select.py 4,5 --dataset DA watches cameras shoes computers > logs/67.log 2>&1 &
-
-# nohup python -u run_select.py 4,5 --dataset > logs/45.log 2>&1 &
-
-
-
-# CUDA_VISIBLE_DEVICES=2,3 python -u main.py --lm llama2-7b --gpus 0,1 --dataset FZ --selection_method our --budget 20 --batch_size 2
-
-nohup python -u run_select.py 4,5 --dataset AB > logs/45.log 2>&1 &
-nohup python -u run_select.py 0,1 --dataset AB > logs/01.log 2>&1 &
+nohup python -u run_eval.py 0 llama2-7b --dataset AG AB FZ WA watches shoes --version ideal > logs/0.log 2>&1 &
+nohup python -u run_eval.py 1 llama2-7b --dataset AG AB FZ WA watches shoes --version ideal > logs/1.log 2>&1 &
+nohup python -u run_eval.py 0 llama2-13b --dataset AG AB FZ WA watches shoes --version ideal > logs/00.log 2>&1 &
+nohup python -u run_eval.py 1 llama2-13b --dataset AG AB FZ WA watches shoes --version ideal > logs/11.log 2>&1 &
+nohup python -u run_eval.py 2,3 llama2-70b --dataset AG AB FZ WA watches shoes --version ideal > logs/23.log 2>&1 &
+nohup python -u run_eval.py 4,5 llama2-70b --dataset AG AB FZ WA watches shoes --version ideal > logs/45.log 2>&1 &
+nohup python -u run_eval.py 6,7 llama2-70b --dataset AG AB FZ WA watches shoes --version ideal > logs/67.log 2>&1 &

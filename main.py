@@ -97,7 +97,7 @@ def initialization(args):
     train_entry_pairs, train_labels = load_data(
         args.data_dir, args.train_file, args.is_wdc
     )
-    if len(train_entry_pairs) <= args.sample_size:
+    if len(train_entry_pairs) <= args.sample_size - 100:
         print(f"same as the previous result")
         exit()
     data_dir = args.data_dir.replace("data", "temp_data")
