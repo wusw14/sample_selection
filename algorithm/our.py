@@ -172,6 +172,8 @@ def sampling(
     n=10,
     type="MFL_whole",
 ):
+    if n == 0:
+        return [], []
     labeled_indices_new = []
     selected_indices = []
     if labeled_info is not None:
