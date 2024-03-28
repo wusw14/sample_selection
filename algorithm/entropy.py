@@ -38,65 +38,10 @@ def max_entropy(model_name, model, tokenizer, inputs, labels, embeddings, args):
     return sorted_indices[: args.budget]
 
 
-def cal_cosine_sim(args):
-    data_dir = args.data_dir.replace("data", "temp_data")
-    embeddingsA = np.loadtxt(f"{data_dir}/train_A_emb.npy")
-    embeddingsB = np.loadtxt(f"{data_dir}/train_B_emb.npy")
-    embeddingsA = embeddingsA / np.linalg.norm(embeddingsA, axis=1, keepdims=True)
-    embeddingsB = embeddingsB / np.linalg.norm(embeddingsB, axis=1, keepdims=True)
-    cosine_sim = np.sum(embeddingsA * embeddingsB, axis=1)
-    return cosine_sim
-
-
-def stratified_sampling(inputs, labels, embeddings, cosine_of_each_pair, args):
-    budget = 100
-    # budget = int(max(100, np.ceil(len(labels) / (args.k * (args.k + 1) / 2.0))))
-    # budget = int(max(100, np.ceil(len(labels) / args.k)))
-    # by cosine similarity and null values distribution
-    df = pd.DataFrame({"id": list(range(len(inputs))), "score": cosine_of_each_pair})
-    df["group"] = pd.cut(df["score"], bins=budget, labels=list(range(budget)))
-    group_id, _ = zip(
-        *sorted(
-            df.groupby(["group"]).size().reset_index().values,
-            key=lambda x: x[-1],
-        )
-    )
-    group_num = len(group_id)
-    sample_indices = []
-    for i in range(group_num):
-        df_sub = df[df.group == i]
-        if len(df_sub) == 0:
-            continue
-        n = (budget - len(sample_indices)) // (group_num - i)
-        if n >= len(df_sub):
-            sample_indices += df_sub["id"].tolist()
-        else:
-            sample_indices += df_sub.sample(n=n, random_state=args.seed)["id"].tolist()
-    sample_inputs = [inputs[idx] for idx in sample_indices]
-    sample_labels = [labels[idx] for idx in sample_indices]
-    sample_embeddings = [embeddings[idx] for idx in sample_indices]
-    scores = [cosine_of_each_pair[idx] for idx in sample_indices]
-    print(
-        f"pos/neg in candidates: {sum(sample_labels)}/{len(sample_labels)-sum(sample_labels)}"
-    )
-    return sample_inputs, sample_labels, sample_embeddings, sample_indices, scores
-
-
 def max_entropy_bl(model_name, model, tokenizer, inputs, labels, embeddings, args):
-    # 1st sampling
-    # 2nd max entropy
-    cosine_of_each_pair = cal_cosine_sim(args)
-    inputs, labels, embeddings, candidate_indices, scores = stratified_sampling(
-        inputs, labels, embeddings, cosine_of_each_pair, args
-    )
-    indices = [np.argmax(scores), np.argmin(scores)]
-    prekg = [
-        [inputs[indices[0]], inputs[indices[1]]],
-        [labels[indices[0]], labels[indices[1]]],
-        [embeddings[indices[0]], embeddings[indices[1]]],
-    ]
+    indices = []
     entropys, predictions = cal_entropy(
-        model_name, model, tokenizer, inputs, labels, embeddings, args, prekg
+        model_name, model, tokenizer, inputs, labels, embeddings, args
     )
     sorted_indices = np.argsort(predictions).tolist()[::-1]
     left_index, right_index = 0, len(sorted_indices) - 1
@@ -115,7 +60,6 @@ def max_entropy_bl(model_name, model, tokenizer, inputs, labels, embeddings, arg
             if labels[indices[-1]] == 0:
                 next_target = "pos"
     indices = indices[: args.budget]
-    indices = [candidate_indices[idx] for idx in indices]
     return indices
 
 
@@ -125,6 +69,32 @@ def min_entropy(model_name, model, tokenizer, inputs, labels, embeddings, args):
     )
     sorted_indices = np.argsort(entropys).tolist()
     return sorted_indices[: args.budget]
+
+
+def min_entropy_bl(model_name, model, tokenizer, inputs, labels, embeddings, args):
+    indices = []
+    entropys, predictions = cal_entropy(
+        model_name, model, tokenizer, inputs, labels, embeddings, args
+    )
+    predictions = np.array(predictions)
+    pos_indices = np.where(predictions > 0.5)[0]
+    neg_indices = np.where(predictions <= 0.5)[0]
+    # search from potential positive samples
+    if len(pos_indices) > 0:
+        pos_indices, _ = zip(
+            *sorted(zip(pos_indices, predictions[pos_indices]), key=lambda x: x[1])
+        )
+        indices = pos_indices[: ceil(args.budget / 2)]
+    else:
+        indices = []
+    # search from potential negative samples
+    if len(neg_indices) > 0:
+        neg_indices, _ = zip(
+            *sorted(zip(neg_indices, predictions[neg_indices]), key=lambda x: x[1])
+        )
+        indices += neg_indices[: args.budget - len(indices)]
+    indices = list(indices)
+    return indices
 
 
 def cbs_maxIG(model_name, model, tokenizer, inputs, labels, embeddings, args):

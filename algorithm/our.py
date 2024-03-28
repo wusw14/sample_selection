@@ -7,55 +7,10 @@ import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 import math
-from utils.misc import evaluate
+from utils.misc import evaluate, MFL_l1
 from scipy.stats import rankdata
 from sklearn.metrics import f1_score
 import time
-
-
-def cal_cosine_sim(args):
-    data_dir = args.data_dir.replace("data", "temp_data")
-    embsA = np.loadtxt(f"{data_dir}/train_A_emb.npy")
-    embsB = np.loadtxt(f"{data_dir}/train_B_emb.npy")
-    embsA = embsA / np.linalg.norm(embsA, axis=1, keepdims=True)
-    embsB = embsB / np.linalg.norm(embsB, axis=1, keepdims=True)
-    cosine_sim = np.sum(embsA * embsB, axis=1)
-    return cosine_sim
-
-
-def stratified_sampling(inputs, labels, embs, cosine_of_each_pair, args):
-    budget = args.sample_size
-    if len(labels) <= budget:
-        return inputs, labels, embs, list(range(len(inputs))), cosine_of_each_pair
-    # by cosine similarity and null values distribution
-    df = pd.DataFrame({"id": list(range(len(inputs))), "score": cosine_of_each_pair})
-    bin_num = budget
-    df["group"] = pd.cut(df["score"], bins=bin_num, labels=list(range(bin_num)))
-    group_id, _ = zip(
-        *sorted(
-            df.groupby(["group"]).size().reset_index().values,
-            key=lambda x: x[-1],
-        )
-    )
-    group_num = len(group_id)
-    sample_indices = []
-    for i, gid in enumerate(group_id):
-        df_sub = df[df.group == gid]
-        if len(df_sub) == 0:
-            continue
-        n = (budget - len(sample_indices)) // (group_num - i)
-        if n >= len(df_sub):
-            sample_indices += df_sub["id"].tolist()
-        else:
-            sample_indices += df_sub.sample(n=n, random_state=args.seed)["id"].tolist()
-    sample_inputs = [inputs[idx] for idx in sample_indices]
-    sample_labels = [labels[idx] for idx in sample_indices]
-    sample_embs = [embs[idx] for idx in sample_indices]
-    scores = [cosine_of_each_pair[idx] for idx in sample_indices]
-    print(
-        f"pos/neg in candidates: {sum(sample_labels)}/{len(sample_labels)-sum(sample_labels)}"
-    )
-    return sample_inputs, sample_labels, sample_embs, sample_indices, scores
 
 
 def select_next(
@@ -200,7 +155,7 @@ def sampling(
             selected_indices.append(indices[np.argmin(dist)])
         return selected_indices, np.ones(len(selected_indices))
     elif type == "MFL":
-        selected_indices = MFL(candidate_reps, n)
+        selected_indices = MFL_l1(candidate_reps, n)
     elif type == "coverage":
         selected_indices = coverage(indices, candidate_probs, candidate_reps, n)
     elif type == "coverage_by_conf":
@@ -388,27 +343,6 @@ def coverage(indices, candidate_probs, reps, n):
         dist_bw_cand = np.sum(distance_matrix(cand_reps, cand_reps, p=1), 1)
         selected_indices.append(cand_indices[np.argmin(dist_bw_cand)])
         i += 1
-    return selected_indices
-
-
-def MFL(reps, n):
-    dist = distance_matrix(reps, reps, p=1)  # [N, N]
-    sim_matrix = 1 - dist / np.max(dist)
-    similarity_to_labeled = np.array([-1.0] * len(dist))
-    selected_indices, scores = [], []
-    while len(selected_indices) < n:
-        max_score, idx = -1, -1
-        for i in range(len(reps)):
-            if i in selected_indices:
-                continue
-            value = sim_matrix[i] - similarity_to_labeled
-            score = np.sum(value[value > 0])
-            if score > max_score:
-                max_score = score
-                idx = i
-        selected_indices.append(idx)
-        similarity_to_labeled = np.maximum(similarity_to_labeled, sim_matrix[idx])
-        scores.append(max_score)
     return selected_indices
 
 
@@ -656,34 +590,6 @@ def max_info_gain(
     return best_sample, score_max / score_base - 1, pred_dict
 
 
-def select_by_cosine_sim(model_name, model, tokenizer, inputs, labels, embs, args):
-    # sample by cosine similarity
-    cosine_of_each_pair = cal_cosine_sim(args)
-    inputs, labels, embs, candidate_indices, scores = stratified_sampling(
-        inputs, labels, embs, cosine_of_each_pair, args
-    )
-    print(f"candidates: {len(inputs)}")
-    labels, candidate_indices, scores = zip(
-        *sorted(zip(labels, candidate_indices, scores), key=lambda x: x[-1])
-    )
-    left_index, right_index = 0, len(candidate_indices) - 1
-    target = "pos"
-    selected_indices = []
-    while len(selected_indices) < args.budget:
-        if target == "pos":
-            index = right_index
-            right_index -= 1
-            if labels[index] == 1:
-                target = "neg"
-        else:
-            index = left_index
-            left_index += 1
-            if labels[index] == 0:
-                target = "pos"
-        selected_indices.append(candidate_indices[index])
-    return selected_indices
-
-
 def determine_next_target(labels_of_E, selected_indices, probs, labeled_set, labels):
     pos_neg_diff = 2 * np.sum(labels_of_E) - len(labels_of_E)
     if pos_neg_diff < 0:
@@ -717,25 +623,7 @@ def determine_next_target(labels_of_E, selected_indices, probs, labeled_set, lab
     return next
 
 
-def get_samples(inputs, labels, embs, candidate_indices, scores):
-    inputs = [inputs[idx] for idx in candidate_indices]
-    labels = [labels[idx] for idx in candidate_indices]
-    embs = [embs[idx] for idx in candidate_indices]
-    scores = [scores[idx] for idx in candidate_indices]
-    print(f"candiates: {len(inputs)}, pos/neg: {sum(labels)}/{len(labels)-sum(labels)}")
-    return inputs, labels, embs, scores
-
-
-def ideal(model_name, model, tokenizer, inputs, labels, embs, args):
-    # sample by cosine similarity
-    cosine_of_each_pair = cal_cosine_sim(args)
-    candidate_indices = MFL(np.reshape(cosine_of_each_pair, (-1, 1)), args.sample_size)
-    inputs, labels, embs, scores = get_samples(
-        inputs, labels, embs, candidate_indices, cosine_of_each_pair
-    )
-    # inputs, labels, embs, candidate_indices, scores = stratified_sampling(
-    #     inputs, labels, embs, cosine_of_each_pair, args
-    # )
+def ideal(model_name, model, tokenizer, inputs, labels, embs, scores, args):
     unselected_indices = list(range(len(labels)))
     print(f"candidates: {len(inputs)}")
     # warm up with the sample with the highest and lowest cosine similarity score
@@ -782,14 +670,17 @@ def ideal(model_name, model, tokenizer, inputs, labels, embs, args):
                 embs_of_U.append(embs[idx])
                 labels_of_U.append(labels[idx])
             print(f"debug+++ pred ratio {len(inputs_of_U)}/{len(unselected_indices)}")
-            prompts = construct_prompt(
-                inputs_of_E, labels_of_E, embs_of_E, inputs_of_U, embs_of_U, args
-            )
-            print(prompts[0])
-            print("---------------\n\n")
-            _, probs = inference(model_name, model, tokenizer, prompts, args)
-            # update the historical information
-            probs = list(np.clip(np.array(probs), 1e-6, 1 - 1e-6))
+            if len(inputs_of_U) > 0:
+                prompts = construct_prompt(
+                    inputs_of_E, labels_of_E, embs_of_E, inputs_of_U, embs_of_U, args
+                )
+                print(prompts[0])
+                print("---------------\n\n")
+                _, probs = inference(model_name, model, tokenizer, prompts, args)
+                # update the historical information
+                probs = list(np.clip(np.array(probs), 1e-6, 1 - 1e-6))
+            else:
+                probs = []
             probs_N = np.ones(len(labels)) * 2
             for idx in unselected_indices:
                 if idx in last_pred:
@@ -863,6 +754,4 @@ def ideal(model_name, model, tokenizer, inputs, labels, embs, args):
             if len(labeled_set) == args.budget:
                 print(f"!!! Run out of the budget before selecting the enough examples")
                 break
-
-    selected_indices = [candidate_indices[idx] for idx in selected_indices]
     return selected_indices

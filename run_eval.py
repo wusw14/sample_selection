@@ -61,8 +61,8 @@ serialization = "s6"
 selection_method = "ideal"
 k = 10
 
-for sample_size in [400, 500, 600, 800, 1000]:
-    for budget in [50, 20, 30, 40, 60][:1]:
+for sample_size in [800]:  # [400, 500, 600, 800, 1000]:
+    for budget in [50, 10, 20, 30, 40, 60][1:2]:
         args.version = f"0328_S{sample_size}_B{budget}_K{k}"
         for mode in ["select", "inference"]:
             for dataset in dataset_list:

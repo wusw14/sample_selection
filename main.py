@@ -1,13 +1,18 @@
 from algorithm.MFL import MFL
 from algorithm.votek import votek, fast_votek
 from algorithm.adaicl import adaicl
-from algorithm.entropy import max_entropy, min_entropy, cbs_maxIG, max_entropy_bl
-from algorithm.our import (
-    select_by_cosine_sim,
-    ideal,
+from algorithm.entropy import (
+    max_entropy,
+    min_entropy,
+    cbs_maxIG,
+    max_entropy_bl,
+    min_entropy_bl,
 )
+from algorithm.balanced_cosine import select_by_cosine_sim
+from algorithm.our import ideal
 from utils.llm import init_model
 from utils.io import load_data
+from utils.misc import MFL_l1, cal_cosine_sim, get_samples
 import os
 import sys
 import argparse
@@ -104,11 +109,29 @@ def initialization(args):
     embeddings = np.loadtxt(os.path.join(data_dir, "train_pair_emb.npy"))
     assert len(train_entry_pairs) == len(embeddings)
 
+    # 1st stage sampling
+    if args.sample_size != -1:
+        cosine_of_each_pair = cal_cosine_sim(args)
+        candidate_indices = MFL_l1(
+            np.reshape(cosine_of_each_pair, (-1, 1)), args.sample_size
+        )
+        inputs, labels, embs, scores = get_samples(
+            train_entry_pairs,
+            train_labels,
+            embeddings,
+            candidate_indices,
+            cosine_of_each_pair,
+        )
+    else:
+        inputs, labels, embs = train_entry_pairs, train_labels, embeddings
+        scores = cal_cosine_sim(args)
+        candidate_indices = list(range(len(inputs)))
+
     if args.selection_method in ["MFL", "fast_votek", "cosine_sim"]:
         model_name, model, tokenizer = None, None, None
     else:
         model_name, model, tokenizer = init_model(args)
-    return model_name, model, tokenizer, train_entry_pairs, train_labels, embeddings
+    return model_name, model, tokenizer, inputs, labels, embs, scores, candidate_indices
 
 
 if __name__ == "__main__":
@@ -123,19 +146,25 @@ if __name__ == "__main__":
     data_dir = args.data_dir.replace("data", f"new_data/{args.version}")
     if os.path.exists(data_dir) is False:
         os.makedirs(data_dir)
-    if args.selection_method in ["MFL", "fast_votek"]:
+    if args.selection_method in ["MFL", "fast_votek", "cosine_sim"]:
         output_file = os.path.join(data_dir, f"{args.selection_method}.csv")
     else:
         output_file = os.path.join(data_dir, f"{args.selection_method}_{args.lm}.csv")
     if os.path.exists(output_file):
         df = pd.read_csv(output_file)
-        if len(df[df.budget == args.budget]) > 0:
-            print("already got the selected indices")
-            exit()
+        print("already got the selected indices")
+        exit()
 
-    (model_name, model, tokenizer, entry_pairs, labels, embeddings) = initialization(
-        args
-    )
+    (
+        model_name,
+        model,
+        tokenizer,
+        entry_pairs,
+        labels,
+        embeddings,
+        scores,
+        candidate_indices,
+    ) = initialization(args)
 
     start_time = time.time()
     if args.selection_method == "votek":
@@ -147,23 +176,17 @@ if __name__ == "__main__":
             model_name, model, tokenizer, entry_pairs, labels, embeddings, args
         )
     elif args.selection_method == "cosine_sim":
-        selected_indices = select_by_cosine_sim(
-            model_name, model, tokenizer, entry_pairs, labels, embeddings, args
-        )
+        selected_indices = select_by_cosine_sim(labels, scores, args)
     elif args.selection_method == "ideal":
         selected_indices = ideal(
-            model_name, model, tokenizer, entry_pairs, labels, embeddings, args
+            model_name, model, tokenizer, entry_pairs, labels, embeddings, scores, args
         )
     elif args.selection_method == "max_entropy":
-        selected_indices = max_entropy(
-            model_name, model, tokenizer, entry_pairs, labels, embeddings, args
-        )
-    elif "max_entropy_bl" in args.selection_method:
         selected_indices = max_entropy_bl(
             model_name, model, tokenizer, entry_pairs, labels, embeddings, args
         )
     elif args.selection_method == "min_entropy":
-        selected_indices = min_entropy(
+        selected_indices = min_entropy_bl(
             model_name, model, tokenizer, entry_pairs, labels, embeddings, args
         )
     elif args.selection_method == "cbs_maxIG":
@@ -178,6 +201,7 @@ if __name__ == "__main__":
         raise NotImplementedError
     print(f"Total Time for Selection: {time.time()-start_time:.2f}s")
     selected_labels = [labels[idx] for idx in selected_indices]
+    selected_indices = [candidate_indices[idx] for idx in selected_indices]
 
     df_new = pd.DataFrame(
         {
