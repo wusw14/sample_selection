@@ -102,9 +102,6 @@ def initialization(args):
     train_entry_pairs, train_labels = load_data(
         args.data_dir, args.train_file, args.is_wdc
     )
-    if len(train_entry_pairs) <= args.sample_size - 100:
-        print(f"same as the previous result")
-        exit()
     data_dir = args.data_dir.replace("data", "temp_data")
     embeddings = np.loadtxt(os.path.join(data_dir, "train_pair_emb.npy"))
     assert len(train_entry_pairs) == len(embeddings)
@@ -113,7 +110,7 @@ def initialization(args):
     if args.sample_size != -1:
         cosine_of_each_pair = cal_cosine_sim(args)
         candidate_indices = MFL_l1(
-            np.reshape(cosine_of_each_pair, (-1, 1)), args.sample_size
+            np.reshape(cosine_of_each_pair, (-1, 1)), args.sample_size, early_stop=True
         )
         inputs, labels, embs, scores = get_samples(
             train_entry_pairs,

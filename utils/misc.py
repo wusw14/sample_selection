@@ -89,12 +89,13 @@ def stratified_sampling(inputs, labels, embs, cosine_of_each_pair, args):
     return sample_inputs, sample_labels, sample_embs, sample_indices, scores
 
 
-def MFL_l1(reps, n):
+def MFL_l1(reps, n, early_stop=False):
     dist = distance_matrix(reps, reps, p=1)  # [N, N]
     sim_matrix = 1 - dist / np.max(dist)
     similarity_to_labeled = np.array([-1.0] * len(dist))
     selected_indices, scores = [], []
-    while len(selected_indices) < n:
+    cnt = 0
+    while len(selected_indices) < min(n, len(reps)):
         max_score, idx = -1, -1
         for i in range(len(reps)):
             if i in selected_indices:
@@ -103,10 +104,20 @@ def MFL_l1(reps, n):
             score = np.sum(value[value > 0])
             if score > max_score:
                 max_score = score
+                max_num = np.sum(value > 0)
+                max_imp = np.max(value)
                 idx = i
         selected_indices.append(idx)
         similarity_to_labeled = np.maximum(similarity_to_labeled, sim_matrix[idx])
         scores.append(max_score)
+        # print(max_score, max_num, max_imp)
+        if early_stop:
+            if max_imp < 0.001:
+                cnt += 1
+                if cnt > 10:
+                    break
+            else:
+                cnt = 0
     return selected_indices
 
 

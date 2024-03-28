@@ -476,13 +476,14 @@ def max_info_gain(
         labeled_eval_size = max(
             5, np.round(len(labeled_eval_org) / tau ** (3 - t)).astype(int)
         )
-        print(
-            f"\n**********[Eval] iteration {t} candidates: {len(candidate_indices)} "
-            f" un_eval_size: {un_eval_size}, labeled_eval_size: {labeled_eval_size}"
-        )
         sample_indices = list(sample_indices_org)[:un_eval_size]
         labeled_eval = list(labeled_eval_org)[:labeled_eval_size]
         labeled_labels = np.array(labels)[labeled_eval]
+        print(
+            f"\n**********[Eval] iteration {t} candidates: {len(candidate_indices)} "
+            f" un_eval_size: {un_eval_size}, labeled_eval_size: {labeled_eval_size}"
+            f" labeled_labels: {np.sum(labeled_labels)}/{len(labeled_labels)}"
+        )
 
         sample_inputs, sample_embs = [], []
         for idx in sample_indices[len(sample_indices_last) :]:
@@ -640,17 +641,25 @@ def ideal(model_name, model, tokenizer, inputs, labels, embs, scores, args):
             selected_indices.append(indices_by_scores[i])
             break
     inputs_of_E, labels_of_E, embs_of_E = [], [], []
-    # selected_indices = [np.argmax(scores), np.argmin(scores)]
     for idx in selected_indices:
         inputs_of_E.append(inputs[idx])
         labels_of_E.append(labels[idx])
         embs_of_E.append(embs[idx])
         del unselected_indices[unselected_indices.index(idx)]
+    remaining_wm_budget = 2 * (args.budget // args.k) - len(labeled_set)
+    if remaining_wm_budget > 0:
+        new_labeled_indices = MFL_l1(
+            np.reshape(scores, (-1, 1)), 2 * (args.budget // args.k)
+        )
+        for index in new_labeled_indices:
+            if index in labeled_set:
+                continue
+            labeled_set.add(index)
+            if len(labeled_set) == 2 * (args.budget // args.k):
+                break
 
     # iterative sampling by confidence
     historical_probs = []
-    # labeled_set = set(selected_indices)
-
     imp_rate = 1
     imp_thr = 0.05
     last_pred = {}
