@@ -104,8 +104,8 @@ def inference(model_name, model, tokenizer, test_prompts, args):
                     pos_prob = score_to_prob(score, tokenizer)
                     ans_list.append(pos_prob)
                     pred_list.append(int(pos_prob > 0.5))
-                if i % 100 == 0:
-                    print(f"processing case {i}")
+                if (i + 1) % 100 == 0:
+                    print(f"processing case {i+1}")
     total_time = time.time() - start_time
-    print(f"Total time for prediction: {total_time:.2f}s")
+    # print(f"Total time for prediction: {total_time:.2f}s")
     return pred_list, ans_list
