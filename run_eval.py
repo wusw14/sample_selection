@@ -63,7 +63,7 @@ k = 10
 
 for sample_size in [2000]:  # [400, 500, 600, 800, 1000]:
     for budget in [50, 10, 20, 30, 40, 60][:1]:
-        args.version = f"0329_B{budget}"
+        args.version = f"0330_V4_B{budget}"
         for mode in ["select", "inference"]:
             for dataset in dataset_list:
                 for lm in ["llama2-7b", "llama2-13b", "llama2-70b"]:
@@ -92,10 +92,10 @@ for sample_size in [2000]:  # [400, 500, 600, 800, 1000]:
                     print(cmd)
                     os.system(cmd)
 
-if args.lm == "llama2-70b":
-    cmd = f"CUDA_VISIBLE_DEVICES={gpus} python -u inference.py"
-    print(cmd)
-    os.system(cmd)
+# if args.lm == "llama2-70b":
+#     cmd = f"CUDA_VISIBLE_DEVICES={gpus} python -u inference.py"
+#     print(cmd)
+#     os.system(cmd)
 # cmd = f"CUDA_VISIBLE_DEVICES={gpus} python -u inference.py"
 # print(cmd)
 # os.system(cmd)
