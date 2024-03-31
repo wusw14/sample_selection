@@ -418,7 +418,7 @@ def cal_info_score(
     metric="f1",
 ):
     score1, conf_p1_avg, conf_p2_avg, conf_avg = cal_score1(probs1, indices1)
-    score2, avg, p1, p2 = cal_score2(probs2, indices2, labels2, selected_index, metric)
+    score2, p1, p2, avg = cal_score2(probs2, indices2, labels2, selected_index, metric)
     score = score1 + score2 / 2
 
     if selected_index == -1:
@@ -463,11 +463,6 @@ def sort_labeled_eval(labeled_eval_org, probs, labels):
                     labeled_neg_easy.append(idx)
                 else:
                     labeled_neg_hard.append(idx)
-        print(
-            f"debug!!! labeled_eval_org: {labeled_eval_org} "
-            f"labeled_pos_easy: {labeled_pos_easy} labeled_neg_easy: {labeled_neg_easy} "
-            f"labeled_pos_hard: {labeled_pos_hard} labeled_neg_hard: {labeled_neg_hard}"
-        )
         # sort by difficulty
         labeled_eval_org = []
         labeled_pos_easy = np.array(labeled_pos_easy)[
@@ -482,6 +477,11 @@ def sort_labeled_eval(labeled_eval_org, probs, labels):
         labeled_neg_hard = np.array(labeled_neg_hard)[
             np.argsort(probs[labeled_neg_hard])
         ].astype(int)
+        print(
+            f"debug!!! labeled_eval_org: {labeled_eval_org} "
+            f"labeled_pos_easy: {labeled_pos_easy} labeled_neg_easy: {labeled_neg_easy} "
+            f"labeled_pos_hard: {labeled_pos_hard} labeled_neg_hard: {labeled_neg_hard}"
+        )
         labeled_pos = intertwine(labeled_pos_easy, labeled_pos_hard)
         labeled_neg = intertwine(labeled_neg_easy, labeled_neg_hard)
         labeled_eval_org = intertwine(labeled_pos, labeled_neg)
@@ -579,7 +579,7 @@ def max_info_gain(
         info_gain = []
 
         # part 2: predictions on the labeled data
-        score2_dict = {}
+        score2_dict, score2_info = {}, {}
         for i, idx in enumerate(candidate_indices):
             inputs_of_E.append(inputs[idx])
             labels_of_E.append(labels[idx])
@@ -603,14 +603,15 @@ def max_info_gain(
             labeled_pred[idx] = labeled_probs
             if idx in labeled_eval:
                 labeled_probs[labeled_eval.index(idx)] = probs[idx]
-            score2_cur = cal_score2(
+            score2_cur, p1, p2, avg = cal_score2(
                 labeled_probs,
                 labeled_eval,
                 labeled_labels,
                 idx,
                 metric=args.metric,
-            )[0]
+            )
             score2_dict[idx] = score2_cur
+            score2_info[idx] = (p1, p2, avg)
             del inputs_of_E[-1]
             del labels_of_E[-1]
             del embs_of_E[-1]
@@ -624,7 +625,7 @@ def max_info_gain(
 
         for i, idx in enumerate(candidate_indices):
             if score2_dict[idx] < score2_thr:
-                info_gain.append(score2_dict[idx])
+                info_gain.append(score2_dict[idx] / 2)
                 continue
             inputs_of_E.append(inputs[idx])
             labels_of_E.append(labels[idx])
@@ -648,8 +649,9 @@ def max_info_gain(
             score1 = cal_score1(probs1, sample_indices)[0]
             score = score1 + score2_dict[idx] / 2
             print(
-                f"added index {idx}, prob: {probs[idx]}, score1: {score1:.4f}, "
-                f"score2: {score2_dict[idx]:.4f}, score: {score:.4f}"
+                f"added index {idx}, prob: {probs[idx]:.4f}, label: {labels[idx]}, "
+                f"score: {score:.4f}, score1: {score1:.4f}, "
+                f"score2: {score2_dict[idx]:.4f}, score2_info: {list(score2_info[idx])}"
             )
 
             if score_max < score:
@@ -796,9 +798,15 @@ def ideal(model_name, model, tokenizer, inputs, labels, embs, scores, args):
         target = 2
         info_dict = {}
         for next in [target, 1 - target]:
-            args.beam_size = np.ceil(
-                (args.budget - len(labeled_set)) / (args.k - len(selected_indices))
-            ).astype(int)
+            if len(selected_indices) == 2:
+                args.beam_size = 3 * args.budget // args.k - len(labeled_set)
+            else:
+                args.beam_size = min(
+                    args.budget // args.k, args.budget - len(labeled_set)
+                )
+            # args.beam_size = np.ceil(
+            #     (args.budget - len(labeled_set)) / (args.k - len(selected_indices))
+            # ).astype(int)
             print(
                 f"remaining budget: {args.budget - len(labeled_set)}, "
                 f"beam size: {args.beam_size}, next: {next}"
@@ -867,6 +875,8 @@ def ideal(model_name, model, tokenizer, inputs, labels, embs, scores, args):
             f"debug!!! no_sig_imp_list: {list(no_sig_imp_list)} "
             f"decrease_cnt: {decrease_cnt}"
         )
-    if len(no_sig_imp_list) > 0 and no_sig_imp_list[-1] < 0:
+    if (len(no_sig_imp_list) > 0 and no_sig_imp_list[-1] < 0) or (
+        len(no_sig_imp_list) > 1 and no_sig_imp_list[-1] < np.max(no_sig_imp_list)
+    ):
         selected_indices.pop(-1)
     return selected_indices
