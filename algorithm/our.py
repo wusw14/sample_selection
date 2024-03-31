@@ -436,51 +436,58 @@ def cal_info_score(
 
 
 def sort_labeled_eval(labeled_eval_org, probs, labels):
+    def intertwine(a, b):
+        c = []
+        a, b = list(a), list(b)
+        for i in range(min(len(a), len(b))):
+            c.append(a[i])
+            c.append(b[i])
+        if len(a) > len(b):
+            c += a[len(b) :]
+        elif len(b) > len(a):
+            c += b[len(a) :]
+        return c
+
     # sort labeled_eval_org by difficulty
     if len(labeled_eval_org) > 0:
-        labeled_pos, labeled_pos_hard, labeled_neg, labeled_neg_hard = [], [], [], []
+        labeled_pos_easy, labeled_pos_hard = [], []
+        labeled_neg_easy, labeled_neg_hard = [], []
         for idx in labeled_eval_org:
             if labels[idx] == 1:
                 if probs[idx] > 0.5:
-                    labeled_pos.append(idx)
+                    labeled_pos_easy.append(idx)
                 else:
                     labeled_pos_hard.append(idx)
             else:
                 if probs[idx] <= 0.5:
-                    labeled_neg.append(idx)
+                    labeled_neg_easy.append(idx)
                 else:
                     labeled_neg_hard.append(idx)
         print(
             f"debug!!! labeled_eval_org: {labeled_eval_org} "
-            f"labeled_pos: {labeled_pos} labeled_neg: {labeled_neg} "
+            f"labeled_pos_easy: {labeled_pos_easy} labeled_neg_easy: {labeled_neg_easy} "
             f"labeled_pos_hard: {labeled_pos_hard} labeled_neg_hard: {labeled_neg_hard}"
         )
         # sort by difficulty
         labeled_eval_org = []
-        labeled_pos = np.array(labeled_pos)[np.argsort(probs[labeled_pos])].astype(int)
-        labeled_neg = np.array(labeled_neg)[np.argsort(-probs[labeled_neg])].astype(int)
-        if len(labeled_pos_hard) > 0:
-            labeled_eval_org.append(
-                labeled_pos_hard[np.argmax(probs[labeled_pos_hard])]
-            )
-            del labeled_pos_hard[np.argmax(probs[labeled_pos_hard])]
-        if len(labeled_neg_hard) > 0:
-            labeled_eval_org.append(
-                labeled_neg_hard[np.argmin(probs[labeled_neg_hard])]
-            )
-            del labeled_neg_hard[np.argmin(probs[labeled_neg_hard])]
-        labeled_pos = list(labeled_pos) + list(labeled_pos_hard)
-        labeled_neg = list(labeled_neg) + list(labeled_neg_hard)
-        for i in range(min(len(labeled_pos), len(labeled_neg))):
-            labeled_eval_org.append(labeled_neg[i])
-            labeled_eval_org.append(labeled_pos[i])
-        if len(labeled_pos) > len(labeled_neg):
-            labeled_eval_org += list(labeled_pos[len(labeled_neg) :])
-        elif len(labeled_neg) > len(labeled_pos):
-            labeled_eval_org += list(labeled_neg[len(labeled_pos) :])
+        labeled_pos_easy = np.array(labeled_pos_easy)[
+            np.argsort(probs[labeled_pos_easy])
+        ].astype(int)
+        labeled_pos_hard = np.array(labeled_pos_hard)[
+            np.argsort(-probs[labeled_pos_hard])
+        ].astype(int)
+        labeled_neg_easy = np.array(labeled_neg_easy)[
+            np.argsort(-probs[labeled_neg_easy])
+        ].astype(int)
+        labeled_neg_hard = np.array(labeled_neg_hard)[
+            np.argsort(probs[labeled_neg_hard])
+        ].astype(int)
+        labeled_pos = intertwine(labeled_pos_easy, labeled_pos_hard)
+        labeled_neg = intertwine(labeled_neg_easy, labeled_neg_hard)
+        labeled_eval_org = intertwine(labeled_pos, labeled_neg)
         print(
-            f"labeled_eval_org: {labeled_eval_org} "
-            f"prob: {probs[labeled_eval_org]}, label: {labels[labeled_eval_org]}"
+            f"labeled_eval_org: {labeled_eval_org}, prob: {list(probs[labeled_eval_org])}, "
+            f"label: {list(labels[labeled_eval_org])}"
         )
     else:
         labeled_eval_org = []
@@ -535,7 +542,7 @@ def max_info_gain(
     for t in range(1, T + 1):
         un_eval_size = max(10, np.round(args.eval_size / tau ** (T - t)).astype(int))
         labeled_eval_size = max(
-            5, np.round(len(labeled_eval_org) / tau ** (T - t)).astype(int)
+            10, np.round(len(labeled_eval_org) / tau ** (T - t)).astype(int)
         )
         sample_indices = list(sample_indices_org)[:un_eval_size]
         labeled_eval = list(labeled_eval_org)[:labeled_eval_size]
@@ -608,13 +615,12 @@ def max_info_gain(
             del labels_of_E[-1]
             del embs_of_E[-1]
 
-        print(
-            f"debug!!! {score2_dict.values()} {np.median(list(score2_dict.values()))}"
-        )
-        if len(score2_dict) >= 10:
-            score2_thr = np.median(list(score2_dict.values()))
+        pruned_ratio = 1 - 2.0 / tau
+        if len(candidate_indices) * pruned_ratio > 1:
+            score2_thr = np.percentile(list(score2_dict.values()), pruned_ratio * 100)
         else:
             score2_thr = 0
+        print(f"pruned_ratio: {pruned_ratio:.4f}, score2_thr: {score2_thr:.4f}")
 
         for i, idx in enumerate(candidate_indices):
             if score2_dict[idx] < score2_thr:
@@ -642,7 +648,7 @@ def max_info_gain(
             score1 = cal_score1(probs1, sample_indices)[0]
             score = score1 + score2_dict[idx] / 2
             print(
-                f"added index {idx}, score1: {score1:.4f}, "
+                f"added index {idx}, prob: {probs[idx]}, score1: {score1:.4f}, "
                 f"score2: {score2_dict[idx]:.4f}, score: {score:.4f}"
             )
 
