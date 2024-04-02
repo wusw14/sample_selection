@@ -52,7 +52,7 @@ def parse_args():
     parser.add_argument("--dirty", action="store_true")
     parser.add_argument("--gpus", type=str, default="1")
     parser.add_argument("--dataset", type=str, default="FZ")
-    parser.add_argument("--path", type=str, default="../data")
+    parser.add_argument("--path", type=str, default="data")
     parser.add_argument("--version", type=str, default="v3")
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--pos_num", type=int, default=3)

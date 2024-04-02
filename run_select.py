@@ -55,9 +55,9 @@ cnt, iter_num = 0, 0
 #         break
 
 batch_size = 1
-sample_size = 100
+sample_size = 2000
 budget = 50
-args.version = "base_debug"
+# args.version = "base_debug"
 mode = "select"
 serialization = "s6"
 k = 10

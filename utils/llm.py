@@ -41,10 +41,10 @@ def get_model_name(name):
     elif "llama2-" in name:
         if "bf" in name:
             version = name.split("-")[-1][:-2]
-            return f"/ssddata/wushw/llama_models/llama-2-{version}b-chat-hf"
+            return f"/ssddata/liuyue/github/llama_models/llama-2-{version}b-chat-hf"
         else:
             version = name.split("-")[-1][:-1]
-            return f"/ssddata/wushw/llama_models/llama-2-{version}b-hf"
+            return f"/ssddata/liuyue/github/llama_models/llama-2-{version}b-hf"
     elif "llama" in name:  # llama7, llama13, llama30, llama65
         size = int(name[5:])
         if size == 65:
