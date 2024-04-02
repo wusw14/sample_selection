@@ -60,10 +60,15 @@ batch_size = 1
 serialization = "s6"
 selection_method = "ideal"
 k = 10
+sample_size = 2000
+sep_sample = True
 
-for sample_size in [2000]:  # [400, 500, 600, 800, 1000]:
+for metric in ["f1", "acc"]:
+    # for sample_size in [2000]:  # [400, 500, 600, 800, 1000]:
     for budget in [50, 10, 20, 30, 40, 60][:1]:
-        args.version = f"0329_B{budget}"
+        args.version = f"0331_{metric}_B{budget}"
+        if sep_sample:
+            args.version += "_sep"
         for mode in ["select", "inference"]:
             for dataset in dataset_list:
                 for lm in ["llama2-7b", "llama2-13b", "llama2-70b"]:
@@ -86,16 +91,21 @@ for sample_size in [2000]:  # [400, 500, 600, 800, 1000]:
                         f"--budget {budget} --k {k} --batch_size {batch_size} "
                         f"--version {args.version} --order o7 "
                         f"--serialization {serialization} "
-                        f"--eval_size 100 --sample_size {sample_size}"
-                        f" > logs/{mode}_{args.version}/{dataset}/{selection_method}_{lm}.log"
+                        f"--eval_size 100 --sample_size {sample_size} "
+                        f"--metric {metric} "
                     )
+                    if sep_sample:
+                        cmd += " --sep_sample"
+                    if args.dirty:
+                        cmd += " --dirty"
+                    cmd += f" > logs/{mode}_{args.version}/{dataset}/{selection_method}_{lm}.log"
                     print(cmd)
                     os.system(cmd)
 
-if args.lm == "llama2-70b":
-    cmd = f"CUDA_VISIBLE_DEVICES={gpus} python -u inference.py"
-    print(cmd)
-    os.system(cmd)
+# if args.lm == "llama2-70b":
+#     cmd = f"CUDA_VISIBLE_DEVICES={gpus} python -u inference.py"
+#     print(cmd)
+#     os.system(cmd)
 # cmd = f"CUDA_VISIBLE_DEVICES={gpus} python -u inference.py"
 # print(cmd)
 # os.system(cmd)
