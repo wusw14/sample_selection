@@ -63,13 +63,27 @@ def select_next(
     else:
         uncertain_indices = np.where(cond3)[0]
         if len(uncertain_indices) > args.beam_size:
-            uncertain_indices, _ = sampling(
+            uncertain_indices_p1, _ = sampling(
                 historical_probs,
                 uncertain_indices,
                 [[], labeled_set],
                 n=args.beam_size,
                 type="covered_by_rep",
             )
+            labeled_set = labeled_set.union(set(uncertain_indices_p1))
+            if np.sum(labels[list(labeled_set - set(selected_indices))]) < 2:
+                uncertain_indices_p2, _ = sampling(
+                    historical_probs,
+                    np.where(cond1)[0],
+                    [[], labeled_set],
+                    n=(args.beam_size // 2),
+                    type="covered_by_rep",
+                )
+                uncertain_indices = np.concatenate(
+                    [uncertain_indices_p1, uncertain_indices_p2]
+                )
+            else:
+                uncertain_indices = uncertain_indices_p1
     print(f"uncertain_indices: {list(uncertain_indices)}")
     eval_indices, _ = sampling(
         historical_probs,
@@ -402,7 +416,10 @@ def cal_score2(probs2, indices2, labels2, selected_index=-1, metric="f1"):
             pre = np.sum(pred * labels2) / (np.sum(pred) + 1e-6)
             rec = np.sum(pred * labels2) / (np.sum(labels2) + 1e-6)
             f1 = 2 * pre * rec / (pre + rec + 1e-6)
-            score2 = f1
+            if metric == "f1":
+                score2 = f1
+            else:
+                score2 = f1 / 2 + min(pre, rec) / 2
         return score2, pre, rec, f1
 
 
@@ -693,49 +710,55 @@ def determine_next_target(labels_of_E, selected_indices, probs, labeled_set, lab
         next = 0
     else:
         next = 2
-    # else:
-    #     if np.sum(probs > 0.5) == np.sum(labels_of_E):
-    #         next = 1
-    #     elif np.sum(probs <= 0.5) == len(labels_of_E) - np.sum(labels_of_E):
-    #         next = 0
-    #     else:
-    #         labeled_eval = list(labeled_set - set(selected_indices))
-    #         if len(labeled_eval) == 0:
-    #             next = 1
-    #         else:
-    #             eval_labels = np.array(labels)[labeled_eval]
-    #             eval_pseudo = np.array(probs[labeled_eval] > 0.5, dtype=int)
-    #             scores = (eval_labels == eval_pseudo).astype(int)
-    #             pos_avg = np.mean(scores[eval_labels == 1])
-    #             neg_avg = np.mean(scores[eval_labels == 0])
-    #             if np.sum(eval_labels) == 0:
-    #                 pos_avg = 0.5
-    #             if np.sum(eval_labels) == len(eval_labels):
-    #                 neg_avg = 0.5
-    #             if pos_avg > neg_avg:
-    #                 next = 0
-    #             else:
-    #                 next = 1
-    #             print(f"pos_avg: {pos_avg:.4f}, neg_avg: {neg_avg:.4f} => next: {next}")
     return next
+
+
+def warm_up(unselected_indices, scores, labels):
+    # # warm up with the sample with the highest and lowest cosine similarity score
+    # labeled_set = set()
+    # indices_by_scores = np.argsort(scores)[::-1]
+    # for i in range(len(scores)):
+    #     labeled_set.add(indices_by_scores[i])
+    #     if labels[indices_by_scores[i]] == 1:
+    #         selected_indices = [indices_by_scores[i]]
+    #         break
+    # for i in range(len(scores) - 1, -1, -1):
+    #     labeled_set.add(indices_by_scores[i])
+    #     if labels[indices_by_scores[i]] == 0:
+    #         selected_indices.append(indices_by_scores[i])
+    #         break
+    # warm up with cosine similarity score
+    labeled_set = set()
+    unselected_indices, scores = zip(
+        *sorted(zip(unselected_indices, scores), key=lambda x: x[1])
+    )
+    # select the pos
+    l, r = int(len(unselected_indices) / 50 * 49), len(unselected_indices) - 1
+    while l <= r:
+        labeled_set.add(unselected_indices[r])
+        if labels[unselected_indices[r]] == 1:
+            selected_indices = [unselected_indices[r]]
+            break
+        l = (l + r) // 2 + 1
+    # select the neg
+    l, r = 0, int(len(unselected_indices) / 5)
+    while l <= r:
+        labeled_set.add(unselected_indices[r])
+        if labels[unselected_indices[r]] == 0:
+            selected_indices.append(unselected_indices[r])
+            break
+        r = (l + r) // 2
+    print(
+        f"[warmp up], selected_indices: {selected_indices}, "
+        f"labeled_set: {labeled_set}, labels: {list(np.array(labels)[list(labeled_set)])}"
+    )
+    return selected_indices, labeled_set
 
 
 def ideal(model_name, model, tokenizer, inputs, labels, embs, scores, args):
     unselected_indices = list(range(len(labels)))
     print(f"candidates: {len(inputs)}")
-    # warm up with the sample with the highest and lowest cosine similarity score
-    labeled_set = set()
-    indices_by_scores = np.argsort(scores)[::-1]
-    for i in range(len(scores)):
-        labeled_set.add(indices_by_scores[i])
-        if labels[indices_by_scores[i]] == 1:
-            selected_indices = [indices_by_scores[i]]
-            break
-    for i in range(len(scores) - 1, -1, -1):
-        labeled_set.add(indices_by_scores[i])
-        if labels[indices_by_scores[i]] == 0:
-            selected_indices.append(indices_by_scores[i])
-            break
+    selected_indices, labeled_set = warm_up(unselected_indices, scores, labels)
     inputs_of_E, labels_of_E, embs_of_E = [], [], []
     for idx in selected_indices:
         inputs_of_E.append(inputs[idx])
@@ -752,6 +775,7 @@ def ideal(model_name, model, tokenizer, inputs, labels, embs, scores, args):
     start_time = time.time()
     no_sig_imp_list = []
     decrease_cnt = 0
+    beam_size = np.ceil((args.budget - len(labeled_set)) / (args.k - 2)).astype(int)
     while len(selected_indices) < args.k:
         print(f"\n\n****************iteration {len(selected_indices) + 1}")
 
@@ -798,15 +822,7 @@ def ideal(model_name, model, tokenizer, inputs, labels, embs, scores, args):
         target = 2
         info_dict = {}
         for next in [target, 1 - target]:
-            if len(selected_indices) == 2:
-                args.beam_size = 3 * args.budget // args.k - len(labeled_set)
-            else:
-                args.beam_size = min(
-                    args.budget // args.k, args.budget - len(labeled_set)
-                )
-            # args.beam_size = np.ceil(
-            #     (args.budget - len(labeled_set)) / (args.k - len(selected_indices))
-            # ).astype(int)
+            args.beam_size = min(beam_size, args.budget - len(labeled_set))
             print(
                 f"remaining budget: {args.budget - len(labeled_set)}, "
                 f"beam size: {args.beam_size}, next: {next}"
