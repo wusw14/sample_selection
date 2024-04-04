@@ -81,7 +81,7 @@ def select_next(
                 )
                 uncertain_indices = np.concatenate(
                     [uncertain_indices_p1, uncertain_indices_p2]
-                )
+                ).astype(int)
             else:
                 uncertain_indices = uncertain_indices_p1
     print(f"uncertain_indices: {list(uncertain_indices)}")
@@ -168,6 +168,7 @@ def sampling(
         selected_indices = np.array(selected_indices)
     else:
         selected_indices = np.array(indices)[selected_indices]
+    selected_indices = np.array(selected_indices).astype(int)
     print(f"[{type}] selected_indices: {list(selected_indices)}")
     print(f"[{type}] probs: {list(np.round(probs[selected_indices], 4))}")
     return selected_indices, np.ones(len(selected_indices))
@@ -527,6 +528,12 @@ def max_info_gain(
     no_improvement,
     args,
 ):
+    pos_num = np.sum(labels[selected_indices])
+    neg_num = len(selected_indices) - pos_num
+    pos_scalar = (5 * args.k + neg_num) / (10 * args.k + pos_num + neg_num)
+    neg_scalar = (5 * args.k + pos_num) / (10 * args.k + pos_num + neg_num)
+    scalar_dict = {1: pos_scalar, 0: neg_scalar}
+    print(f"scalar_dict: {scalar_dict}")
     pred_dict = {}
     labeled_eval_org = list(labeled_eval_org)
     hist_indices = []
@@ -539,6 +546,7 @@ def max_info_gain(
     else:
         hist_indices = []
     candidate_indices = list(uncertain_indices) + list(hist_indices)
+    candidate_indices = [int(v) for v in candidate_indices]
 
     inputs_of_E, labels_of_E, embs_of_E = [], [], []
     for idx in selected_indices:
@@ -642,7 +650,7 @@ def max_info_gain(
 
         for i, idx in enumerate(candidate_indices):
             if score2_dict[idx] < score2_thr:
-                info_gain.append(score2_dict[idx] / 2)
+                info_gain.append(score2_dict[idx] / 2 * scalar_dict[labels[idx]])
                 continue
             inputs_of_E.append(inputs[idx])
             labels_of_E.append(labels[idx])
@@ -665,9 +673,10 @@ def max_info_gain(
             unlabeled_pred[idx] = probs1
             score1 = cal_score1(probs1, sample_indices)[0]
             score = score1 + score2_dict[idx] / 2
+            score = score * scalar_dict[labels[idx]]
             print(
                 f"added index {idx}, prob: {probs[idx]:.4f}, label: {labels[idx]}, "
-                f"score: {score:.4f}, score1: {score1:.4f}, "
+                f"scalar: {scalar_dict[labels[idx]]:.4f}, score: {score:.4f}, score1: {score1:.4f}, "
                 f"score2: {score2_dict[idx]:.4f}, score2_info: {list(score2_info[idx])}"
             )
 
@@ -699,6 +708,7 @@ def max_info_gain(
         if len(candidate_indices) < 2:
             print(f"Not too much candidates left for comparison!!!")
             break
+    score_max = score_max / scalar_dict[labels[best_sample]]
     return best_sample, score_max / score_base - 1, pred_dict
 
 
