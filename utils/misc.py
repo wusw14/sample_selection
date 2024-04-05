@@ -90,7 +90,7 @@ def stratified_sampling(inputs, labels, embs, cosine_of_each_pair, args):
 
 
 def MFL_l1(reps, n, early_stop=False):
-    dist = distance_matrix(reps, reps, p=1)  # [N, N]
+    dist = distance_matrix(reps, reps, p=2)  # [N, N]
     sim_matrix = 1 - dist / np.max(dist)
     similarity_to_labeled = np.array([-1.0] * len(dist))
     selected_indices, scores = [], []
