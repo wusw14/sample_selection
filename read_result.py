@@ -34,15 +34,18 @@ dataset_dict = {
 for dataset in dataset_list:
     f1_list = []
     dataset = dataset_dict.get(dataset, dataset)
+    cnt = 0
     for llm in ["llama2-7b", "llama2-13b", "llama2-70b"]:
         for k in [6, 8, 10][-1:]:
             filename = f"{result_dir}/{dataset}/{method}_{llm}.csv"
             if os.path.exists(filename) == False:
                 f1_list.append("--")
+                cnt += 1
                 continue
             df = pd.read_csv(filename)
             pred = df["pred"].values
             label = df["label"].values
             precision, recall, f1 = evaluate(label, pred)
             f1_list.append(f"{f1:.2f}")
-    print(f"{dataset} {' '.join(f1_list)}")
+    if cnt < 3:
+        print(f"{dataset} {' '.join(f1_list)}")
