@@ -39,34 +39,34 @@ memoryInfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
 
 print(memoryInfo.used / memoryInfo.total)
 cnt, iter_num = 0, 0
-# while True:
-#     handle = pynvml.nvmlDeviceGetHandleByIndex(int(gpus.split(",")[0]))
-#     memoryInfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
-#     memory = memoryInfo.used / memoryInfo.total
-#     if memory > 0.5:
-#         cnt = 0
-#         time.sleep(300)
-#         iter_num += 1
-#     else:
-#         cnt += 1
-#         print(f"cnt: {cnt}, memory: {memory}")
-#         time.sleep(np.random.randint(10, 20))
-#     if iter_num % 12 == 0:
-#         print(f"{iter_num//12} hours passed")
-#     if cnt > 5:
-#         break
+while True:
+    handle = pynvml.nvmlDeviceGetHandleByIndex(int(gpus.split(",")[0]))
+    memoryInfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
+    memory = memoryInfo.used / memoryInfo.total
+    if memory > 0.2:
+        cnt = 0
+        time.sleep(300)
+        iter_num += 1
+    else:
+        cnt += 1
+        print(f"cnt: {cnt}, memory: {memory}")
+        time.sleep(np.random.randint(10, 20))
+    if iter_num % 12 == 0:
+        print(f"{iter_num//12} hours passed")
+    if cnt > 60:
+        break
 
 batch_size = 1
 serialization = "s6"
 selection_method = "ideal"
 k = 10
 sample_size = 2000
-sep_sample = True
+sep_sample = False
 
-for metric in ["f1", "acc"]:
+for metric in ["f1", "f1_v2", "acc"][:1]:
     # for sample_size in [2000]:  # [400, 500, 600, 800, 1000]:
-    for budget in [50, 10, 20, 30, 40, 60][:1]:
-        args.version = f"0331_{metric}_B{budget}"
+    for budget in [20, 40, 80, 100]:
+        args.version = f"0409_{metric}_B{budget}"
         if sep_sample:
             args.version += "_sep"
         for mode in ["select", "inference"]:
