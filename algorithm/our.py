@@ -422,7 +422,7 @@ def cal_info_score(
 ):
     score1, conf_p1_avg, conf_p2_avg, conf_avg = cal_score1(probs1, indices1)
     score2, p1, p2, avg = cal_score2(probs2, indices2, labels2, selected_index, metric)
-    score = score1 + score2
+    score = 0.5 * score1 + score2
 
     if selected_index == -1:
         printinfo = f"[Base] "
@@ -440,15 +440,22 @@ def cal_info_score(
 
 def sort_labeled_eval(labeled_eval_org, probs, labels):
     def intertwine(a, b):
+        if len(a) == 0:
+            return list(b)
+        if len(b) == 0:
+            return list(a)
+        num = len(a) + len(b)
+        if len(a) > len(b):
+            a, b = b, a
+        rate = min(round(num / len(a)), 3)
         c = []
         a, b = list(a), list(b)
-        for i in range(min(len(a), len(b))):
-            c.append(a[i])
-            c.append(b[i])
-        if len(a) > len(b):
-            c += a[len(b) :]
-        elif len(b) > len(a):
-            c += b[len(a) :]
+        for i in range(num):
+            if i % rate == 0 and len(a) > 0:
+                c.append(a.pop(0))
+            elif len(b) > 0:
+                c.append(b.pop(0))
+        c = c + a + b
         return c
 
     # sort labeled_eval_org by difficulty
@@ -564,12 +571,18 @@ def max_info_gain(
                 probs[idx] = probs1.pop(0)
 
     labeled_eval_org = sort_labeled_eval(labeled_eval_org, probs, labels)
+    # acc = np.sum(labels[labeled_eval_org] == (probs[labeled_eval_org] > 0.5)) / len(
+    #     labeled_eval_org
+    # )
+    # print(f"debug+++ acc: {acc:.4f}")
+    # if acc == 1 and len(selected_indices) == 2:
+    #     return None, -1, pred_dict
 
     if len(candidate_indices) > 3:
         T = 3
     else:
         T = 1
-    tau = np.ceil(len(candidate_indices) ** (1.0 / T)).astype(int)
+    tau = round(len(candidate_indices) ** (1.0 / T))
     print(f"********* tau: {tau}")
     unlabeled_pred, labeled_pred = {}, {}
     sample_indices_last, labeled_eval_last = [], []
@@ -635,17 +648,24 @@ def max_info_gain(
             if t > 1:
                 labeled_probs = np.concatenate([labeled_pred[idx], labeled_probs])
             labeled_pred[idx] = deepcopy(labeled_probs)
-            if idx in labeled_eval:
-                labeled_probs[labeled_eval.index(idx)] = probs[idx]
-            score2_cur, p1, p2, avg = cal_score2(
+            score2_p1, p1, p2, avg = cal_score2(
                 labeled_probs,
                 labeled_eval,
                 labeled_labels,
                 idx,
                 metric=args.metric,
             )
-            score2_dict[idx] = score2_cur
-            score2_info[idx] = (p1, p2, avg)
+            if idx in labeled_eval:
+                labeled_probs[labeled_eval.index(idx)] = probs[idx]
+            score2_p2, p1, p2, avg = cal_score2(
+                labeled_probs,
+                labeled_eval,
+                labeled_labels,
+                idx,
+                metric=args.metric,
+            )
+            score2_dict[idx] = (score2_p1 + score2_p2) / 2
+            score2_info[idx] = (f"{p1:.4f}", f"{p2:.4f}", f"{avg:.4f}")
             del inputs_of_E[-1]
             del labels_of_E[-1]
             del embs_of_E[-1]
@@ -681,7 +701,7 @@ def max_info_gain(
                 probs1 = np.concatenate([unlabeled_pred[idx], probs1])
             unlabeled_pred[idx] = probs1
             score1 = cal_score1(probs1, sample_indices)[0]
-            score = score1 + score2_dict[idx]
+            score = 0.5 * score1 + score2_dict[idx]
             score = score * scalar_dict[labels[idx]]
             print(
                 f"added index {idx}, prob: {probs[idx]:.4f}, label: {labels[idx]}, "
@@ -690,11 +710,12 @@ def max_info_gain(
             )
 
             if score_max < score:
-                score2_imp_rate = score2_dict[idx] / (score2_base + 1e-6)
+                score2_imp_rate = (score2_dict[idx] + 1e-6) / (score2_base + 1e-6)
+                score_imp_rate = score / scalar_dict[labels[idx]] / score_base
                 if score2_dict[idx] < score2_base:
-                    best_imp_rate = score2_imp_rate - 1
+                    best_imp_rate = min(score2_imp_rate, score_imp_rate) - 1
                 else:
-                    best_imp_rate = score / scalar_dict[labels[idx]] / score_base - 1
+                    best_imp_rate = max(score2_imp_rate, score_imp_rate) - 1
                 score_max = score
                 best_sample = idx
                 pred_dict = {}
@@ -717,6 +738,11 @@ def max_info_gain(
                 *sorted(info_dict.items(), key=lambda x: x[1], reverse=True)
             )
             candidate_indices = top_indices[: np.ceil(len(info_dict) / tau).astype(int)]
+            candidate_indices = list(candidate_indices)
+            score2_thr = score2_dict[candidate_indices[0]]
+            for idx in score2_dict:
+                if score2_dict[idx] >= score2_thr and idx not in candidate_indices:
+                    candidate_indices.append(idx)
         else:
             candidate_indices = []
         if len(candidate_indices) < 2:
@@ -791,7 +817,7 @@ def ideal(model_name, model, tokenizer, inputs, labels, embs, scores, args):
 
     # iterative sampling by confidence
     historical_probs = []
-    imp_thr = 0.05
+    imp_thr = 0.02
     last_pred = {}
     no_improvement = False
     start_time = time.time()
@@ -800,7 +826,7 @@ def ideal(model_name, model, tokenizer, inputs, labels, embs, scores, args):
     while len(selected_indices) < args.k:
         print(f"\n\n****************iteration {len(selected_indices) + 1}")
 
-        if len(no_sig_imp_list) == 0:
+        if len(no_sig_imp_list) == 0 and no_improvement == False:
             # LLM's predictions based on selected examples $\mathbf{E}$
             pred_indices, inputs_of_U, embs_of_U, labels_of_U = [], [], [], []
             print(f"debug+++ last_pred: {list(last_pred.keys())}")
@@ -901,7 +927,7 @@ def ideal(model_name, model, tokenizer, inputs, labels, embs, scores, args):
         # update the variables
         no_sig_imp_list.append(imp_rate)
         cul_product = np.prod(np.array(no_sig_imp_list) + 1) - 1
-        if (imp_rate > -imp_thr / 2) and (len(no_sig_imp_list) == 1 or cul_product > 0):
+        if (imp_rate > -0.01) and (len(no_sig_imp_list) == 1 or cul_product > 0):
             del unselected_indices[unselected_indices.index(idx)]
             selected_indices.append(idx)
             inputs_of_E.append(inputs[idx])
@@ -915,16 +941,17 @@ def ideal(model_name, model, tokenizer, inputs, labels, embs, scores, args):
                 f"labels of selected: {labels_of_E}"
             )
             no_improvement = False
-            pred_diff = []
-            for k, v in pred_dict.items():
-                if probs_N[k] == 2:
-                    continue
-                if v > 0.5 and probs_N[k] <= 0.5 or v <= 0.5 and probs_N[k] > 0.5:
-                    pred_diff.append(1)
-                else:
-                    pred_diff.append(0)
-            pred_diff = np.mean(pred_diff)
-            print(f"debug pred diff: {pred_diff:.4f}")
+            # pred_diff = []
+            # for k, v in pred_dict.items():
+            #     if probs_N[k] == 2:
+            #         continue
+            #     if v > 0.5 and probs_N[k] <= 0.5 or v <= 0.5 and probs_N[k] > 0.5:
+            #         pred_diff.append(1)
+            #     else:
+            #         pred_diff.append(0)
+            # pred_diff = np.mean(pred_diff)
+            # print(f"debug pred diff: {pred_diff:.4f}")
+            pred_diff = 0
             last_pred = dict(pred_dict)
             if imp_rate > imp_thr or cul_product > imp_thr or pred_diff > imp_thr:
                 no_sig_imp_list = []

@@ -65,8 +65,8 @@ sep_sample = False
 
 for metric in ["f1", "f1_v2", "acc"][:1]:
     # for sample_size in [2000]:  # [400, 500, 600, 800, 1000]:
-    for budget in [20, 40, 80, 100]:
-        args.version = f"0409_{metric}_B{budget}"
+    for budget in [60, 20, 40, 80, 100][1:3]:
+        args.version = f"0410_V5_{metric}_B{budget}"
         if sep_sample:
             args.version += "_sep"
         for mode in ["select", "inference"]:
