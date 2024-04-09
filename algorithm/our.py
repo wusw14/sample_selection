@@ -690,13 +690,11 @@ def max_info_gain(
             )
 
             if score_max < score:
-                best_imp_rate = (
-                    min(
-                        score2_dict[idx] / (score2_base + 1e-6),
-                        score / scalar_dict[labels[idx]] / score_base,
-                    )
-                    - 1
-                )
+                score2_imp_rate = score2_dict[idx] / (score2_base + 1e-6)
+                if score2_dict[idx] < score2_base:
+                    best_imp_rate = score2_imp_rate - 1
+                else:
+                    best_imp_rate = score / scalar_dict[labels[idx]] / score_base - 1
                 score_max = score
                 best_sample = idx
                 pred_dict = {}
