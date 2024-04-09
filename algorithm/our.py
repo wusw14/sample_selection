@@ -34,7 +34,6 @@ def select_next(
     for idx in selected_indices:
         probs[idx] = 2
     labels = np.array(labels)
-    conf = conf_func(probs)
     cond1 = (probs > 0.5) & (probs <= 1)
     cond2 = probs <= 0.5
     cond3 = probs <= 1
@@ -44,7 +43,6 @@ def select_next(
     if args.sep_sample:
         uncertain_indices_p1 = np.where(cond1)[0]
         uncertain_indices_p2 = np.where(cond2)[0]
-
         if len(uncertain_indices_p1) > args.beam_size // 2:
             uncertain_indices_p1, _ = sampling(
                 historical_probs,
@@ -520,6 +518,7 @@ def max_info_gain(
     pos_scalar = (5 * args.k + neg_num) / (10 * args.k + pos_num + neg_num)
     neg_scalar = (5 * args.k + pos_num) / (10 * args.k + pos_num + neg_num)
     scalar_dict = {1: pos_scalar, 0: neg_scalar}
+    # scalar_dict = {1: 0.5, 0: 0.5}
     print(f"scalar_dict: {scalar_dict}")
     pred_dict = {}
     labeled_eval_org = list(labeled_eval_org)
@@ -610,7 +609,7 @@ def max_info_gain(
             labeled_labels,
             metric=args.metric,
         )
-        best_sample, score_max = None, 0
+        best_sample, score_max, best_imp_rate = None, 0, 0
         info_gain = []
 
         # part 2: predictions on the labeled data
@@ -691,13 +690,20 @@ def max_info_gain(
             )
 
             if score_max < score:
+                best_imp_rate = (
+                    min(
+                        score2_dict[idx] / (score2_base + 1e-6),
+                        score / scalar_dict[labels[idx]] / score_base,
+                    )
+                    - 1
+                )
                 score_max = score
                 best_sample = idx
                 pred_dict = {}
                 for j, index in enumerate(sample_indices):
                     pred_dict[index] = probs1[j]
                 for j, index in enumerate(labeled_eval):
-                    pred_dict[index] = labeled_probs[j]
+                    pred_dict[index] = labeled_pred[idx][j]
             info_gain.append(score)
             del inputs_of_E[-1]
             del labels_of_E[-1]
@@ -718,8 +724,7 @@ def max_info_gain(
         if len(candidate_indices) < 2:
             print(f"Not too much candidates left for comparison!!!")
             break
-    score_max = score_max / scalar_dict[labels[best_sample]]
-    return best_sample, score_max / score_base - 1, pred_dict
+    return best_sample, best_imp_rate, pred_dict
 
 
 def determine_next_target(labels_of_E, selected_indices, probs, labeled_set, labels):
@@ -788,22 +793,19 @@ def ideal(model_name, model, tokenizer, inputs, labels, embs, scores, args):
 
     # iterative sampling by confidence
     historical_probs = []
-    imp_rate = 1
     imp_thr = 0.05
     last_pred = {}
     no_improvement = False
     start_time = time.time()
     no_sig_imp_list = []
-    decrease_cnt = 0
-    cul_product = 1
     beam_size = np.ceil((args.budget - len(labeled_set)) / (args.k - 2)).astype(int)
-    pred_diff = 0
     while len(selected_indices) < args.k:
         print(f"\n\n****************iteration {len(selected_indices) + 1}")
 
-        if cul_product > imp_thr or imp_rate > imp_thr or pred_diff > imp_thr:
+        if len(no_sig_imp_list) == 0:
             # LLM's predictions based on selected examples $\mathbf{E}$
             pred_indices, inputs_of_U, embs_of_U, labels_of_U = [], [], [], []
+            print(f"debug+++ last_pred: {list(last_pred.keys())}")
             for idx in unselected_indices:
                 if idx in last_pred:
                     continue
@@ -869,7 +871,8 @@ def ideal(model_name, model, tokenizer, inputs, labels, embs, scores, args):
                 for idx in range(len(probs_N)):
                     if idx in eval_indices and probs_N[idx] == 2:
                         probs_N[idx] = probs1.pop(0)
-
+        probs_print = [f"{v:.4f}" for v in probs_N]
+        print(f"{probs_print}")
         next = 2
         args.beam_size = min(beam_size, args.budget - len(labeled_set))
         print(
