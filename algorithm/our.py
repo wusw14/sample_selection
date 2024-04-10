@@ -522,8 +522,8 @@ def max_info_gain(
 ):
     pos_num = np.sum(labels[selected_indices])
     neg_num = len(selected_indices) - pos_num
-    pos_scalar = (5 * args.k + neg_num) / (10 * args.k + pos_num + neg_num)
-    neg_scalar = (5 * args.k + pos_num) / (10 * args.k + pos_num + neg_num)
+    pos_scalar = (2 * args.k + neg_num) / (2 * args.k + pos_num)
+    neg_scalar = 1
     scalar_dict = {1: pos_scalar, 0: neg_scalar}
     # scalar_dict = {1: 0.5, 0: 0.5}
     print(f"scalar_dict: {scalar_dict}")
@@ -540,6 +540,8 @@ def max_info_gain(
         hist_indices = []
     candidate_indices = list(uncertain_indices) + list(hist_indices)
     candidate_indices = [int(v) for v in candidate_indices]
+    if len(candidate_indices) == 0:
+        return None, -1, {}
 
     inputs_of_E, labels_of_E, embs_of_E = [], [], []
     for idx in selected_indices:
@@ -571,12 +573,6 @@ def max_info_gain(
                 probs[idx] = probs1.pop(0)
 
     labeled_eval_org = sort_labeled_eval(labeled_eval_org, probs, labels)
-    # acc = np.sum(labels[labeled_eval_org] == (probs[labeled_eval_org] > 0.5)) / len(
-    #     labeled_eval_org
-    # )
-    # print(f"debug+++ acc: {acc:.4f}")
-    # if acc == 1 and len(selected_indices) == 2:
-    #     return None, -1, pred_dict
 
     if len(candidate_indices) > 3:
         T = 3
@@ -587,6 +583,7 @@ def max_info_gain(
     unlabeled_pred, labeled_pred = {}, {}
     sample_indices_last, labeled_eval_last = [], []
     for t in range(1, T + 1):
+        pred_dict_collections, imp_rate_collections, score_collections = {}, {}, {}
         un_eval_size = max(10, np.round(args.eval_size / tau ** (T - t)).astype(int))
         labeled_eval_size = max(
             10, np.round(len(labeled_eval_org) / tau ** (T - t)).astype(int)
@@ -622,8 +619,6 @@ def max_info_gain(
             labeled_labels,
             metric=args.metric,
         )
-        best_sample, score_max, best_imp_rate = None, 0, 0
-        info_gain = []
 
         # part 2: predictions on the labeled data
         score2_dict, score2_info = {}, {}
@@ -679,7 +674,7 @@ def max_info_gain(
 
         for i, idx in enumerate(candidate_indices):
             if score2_dict[idx] < score2_thr:
-                info_gain.append(score2_dict[idx] * scalar_dict[labels[idx]])
+                score_collections[idx] = score2_dict[idx] * scalar_dict[labels[idx]]
                 continue
             inputs_of_E.append(inputs[idx])
             labels_of_E.append(labels[idx])
@@ -709,45 +704,60 @@ def max_info_gain(
                 f"score2: {score2_dict[idx]:.4f}, score2_info: {list(score2_info[idx])}"
             )
 
-            if score_max < score:
-                score2_imp_rate = (score2_dict[idx] + 1e-6) / (score2_base + 1e-6)
-                score_imp_rate = score / scalar_dict[labels[idx]] / score_base
-                if score2_dict[idx] < score2_base:
-                    best_imp_rate = min(score2_imp_rate, score_imp_rate) - 1
-                else:
-                    best_imp_rate = max(score2_imp_rate, score_imp_rate) - 1
-                score_max = score
-                best_sample = idx
-                pred_dict = {}
-                for j, index in enumerate(sample_indices):
-                    pred_dict[index] = probs1[j]
-                for j, index in enumerate(labeled_eval):
-                    pred_dict[index] = labeled_pred[idx][j]
-            info_gain.append(score)
+            pred_dict_collections[idx] = {}
+            for j, index in enumerate(sample_indices):
+                pred_dict_collections[idx][index] = probs1[j]
+            for j, index in enumerate(labeled_eval):
+                pred_dict_collections[idx][index] = labeled_pred[idx][j]
+            score2_imp_rate = (score2_dict[idx] + 1e-6) / (score2_base + 1e-6) - 1
+            score_imp_rate = score / scalar_dict[labels[idx]] / score_base - 1
+            if score2_imp_rate < -0.01:
+                imp_rate = score2_imp_rate
+            else:
+                imp_rate = score_imp_rate
+            imp_rate_collections[idx] = imp_rate
+            score_collections[idx] = score
             del inputs_of_E[-1]
             del labels_of_E[-1]
             del embs_of_E[-1]
-        # normalize info_dict
-        info_rank = np.array(rankdata(info_gain)) / len(info_gain)
-        info_dict = {}
-        for i, rank in enumerate(info_rank):
-            info_dict[candidate_indices[i]] = rank
-        if len(info_dict) > 0:
-            # top 5
-            top_indices, _ = zip(
-                *sorted(info_dict.items(), key=lambda x: x[1], reverse=True)
-            )
-            candidate_indices = top_indices[: np.ceil(len(info_dict) / tau).astype(int)]
-            candidate_indices = list(candidate_indices)
-            score2_thr = score2_dict[candidate_indices[0]]
-            for idx in score2_dict:
-                if score2_dict[idx] >= score2_thr and idx not in candidate_indices:
-                    candidate_indices.append(idx)
-        else:
-            candidate_indices = []
+        # top 5
+        top_indices, _ = zip(
+            *sorted(score_collections.items(), key=lambda x: x[1], reverse=True)
+        )
+        candidate_indices = top_indices[: np.ceil(len(top_indices) / tau).astype(int)]
+        candidate_indices = list(candidate_indices)
+        score2_thr = score2_dict[candidate_indices[0]]
+        for idx in score2_dict:
+            if (
+                score2_dict[idx] >= score2_thr
+                and imp_rate_collections.get(idx, 0) > 0
+                and idx not in candidate_indices
+                and idx not in labeled_eval
+                and score2_thr < 1
+            ):
+                candidate_indices.append(idx)
         if len(candidate_indices) < 2:
             print(f"Not too much candidates left for comparison!!!")
             break
+    candidate_indices, scaled_imp_rates = [], []
+    for idx, imp_rate in imp_rate_collections.items():
+        if imp_rate < 0:
+            continue
+        candidate_indices.append(idx)
+        scaled_imp_rates.append((imp_rate + 1) * scalar_dict[labels[idx]] - 1)
+    if len(scaled_imp_rates) > 1 and len(selected_indices) < args.k - 1:
+        scaled_imp_rates = np.exp(scaled_imp_rates)
+        selected_probs = np.array(scaled_imp_rates) / np.sum(scaled_imp_rates)
+        best_sample = np.random.choice(candidate_indices, p=selected_probs)
+        print(
+            f"indices with imp_rate > 0: {candidate_indices}, "
+            f"scaled_imp_rates: {list(scaled_imp_rates)}, "
+            f"selected_probs: {list(selected_probs)}"
+        )
+    else:
+        best_sample = max(score_collections, key=score_collections.get)
+    best_imp_rate = imp_rate_collections[best_sample]
+    pred_dict = pred_dict_collections[best_sample]
     return best_sample, best_imp_rate, pred_dict
 
 
@@ -817,12 +827,13 @@ def ideal(model_name, model, tokenizer, inputs, labels, embs, scores, args):
 
     # iterative sampling by confidence
     historical_probs = []
-    imp_thr = 0.02
+    imp_thr = 0.01
     last_pred = {}
     no_improvement = False
     start_time = time.time()
     no_sig_imp_list = []
     beam_size = np.ceil((args.budget - len(labeled_set)) / (args.k - 2)).astype(int)
+    # beam_size = max(10, beam_size)
     while len(selected_indices) < args.k:
         print(f"\n\n****************iteration {len(selected_indices) + 1}")
 
