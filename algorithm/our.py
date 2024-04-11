@@ -746,6 +746,8 @@ def max_info_gain(
         candidate_indices.append(idx)
         scaled_imp_rates.append((imp_rate + 1) * scalar_dict[labels[idx]] - 1)
     if len(scaled_imp_rates) > 1 and len(selected_indices) < args.k - 1:
+        scaled_imp_rates = np.array(scaled_imp_rates)
+        scaled_imp_rates = scaled_imp_rates / max(np.min(scaled_imp_rates), 0.01)
         scaled_imp_rates = np.exp(scaled_imp_rates)
         selected_probs = np.array(scaled_imp_rates) / np.sum(scaled_imp_rates)
         best_sample = np.random.choice(candidate_indices, p=selected_probs)
