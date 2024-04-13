@@ -789,7 +789,11 @@ def max_info_gain(
             continue
         candidate_indices.append(idx)
         scaled_imp_rates.append(imp_rate * scalar_dict[labels[idx]])
-    if len(scaled_imp_rates) > 1 and len(selected_indices) < args.k - 1:
+    if (
+        len(scaled_imp_rates) > 1
+        and len(selected_indices) < args.k - 1
+        and args.argmax == False
+    ):
         scaled_imp_rates = np.array(scaled_imp_rates)
         scaled_imp_rates = scaled_imp_rates / max(np.min(scaled_imp_rates), 0.01)
         scaled_imp_rates = np.exp(scaled_imp_rates)

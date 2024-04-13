@@ -51,6 +51,7 @@ def parse_args():
     parser.add_argument("--sample_size", type=int, default=20)
     parser.add_argument("--metric", type=str, default="f1")
     parser.add_argument("--sep_sample", action="store_true")
+    parser.add_argument("--argmax", action="store_true")
     args = parser.parse_args()
 
     dataset_dict = {
