@@ -35,11 +35,12 @@ nohup python -u run_eval.py 4,5 llama2-70b --dataset BR WA DS AB DA FZ IA AG wat
 nohup python -u run_eval.py 6,7 llama2-70b --dataset BR WA DS AB DA FZ IA AG watches shoes cameras computers > logs/67.log 2>&1 &
 
 
-nohup python -u run_eval.py 0 llama2-13b --dataset cameras watches AG AB WA FZ > logs/0.log 2>&1 &
-nohup python -u run_eval.py 1 llama2-13b --dataset cameras watches AG AB WA FZ > logs/1.log 2>&1 &
-nohup python -u run_eval.py 2,3 llama2-70b --dataset cameras watches AG AB WA FZ > logs/23.log 2>&1 &
-nohup python -u run_eval.py 4,5 llama2-70b --dataset cameras watches AG AB WA FZ > logs/45.log 2>&1 &
-nohup python -u run_eval.py 6,7 llama2-70b --dataset cameras watches AG AB WA FZ > logs/67.log 2>&1 &
+nohup python -u run_eval.py 0 llama2-13b --dataset cameras shoes FZ AB DA WA > logs/0.log 2>&1 &
+nohup python -u run_eval.py 1 llama2-13b --dataset cameras shoes FZ AB DA WA > logs/1.log 2>&1 &
+nohup python -u run_eval.py 0,1 llama2-70b --dataset cameras shoes FZ AB DA WA > logs/01.log 2>&1 &
+nohup python -u run_eval.py 2,3 llama2-70b --dataset cameras shoes FZ AB DA WA > logs/23.log 2>&1 &
+nohup python -u run_eval.py 4,5 llama2-70b --dataset cameras shoes FZ AB DA WA > logs/45.log 2>&1 &
+nohup python -u run_eval.py 6,7 llama2-70b --dataset cameras shoes FZ AB DA WA > logs/67.log 2>&1 &
 
 
 nohup python -u run_eval.py 0 llama2-13b --dataset BR shoes > logs/0.log 2>&1 &
@@ -47,6 +48,16 @@ nohup python -u run_eval.py 1 llama2-13b --dataset WA watches > logs/1.log 2>&1 
 nohup python -u run_eval.py 2 llama2-13b --dataset DS > logs/2.log 2>&1 &
 nohup python -u run_eval.py 3 llama2-13b --dataset IA cameras > logs/3.log 2>&1 &
 nohup python -u run_eval.py 4 llama2-13b --dataset FZ computers > logs/4.log 2>&1 &
+nohup python -u run_eval.py 4 llama2-13b --dataset FZ > logs/4.log 2>&1 &
 nohup python -u run_eval.py 5 llama2-13b --dataset DA > logs/5.log 2>&1 &
 nohup python -u run_eval.py 6 llama2-13b --dataset AG > logs/6.log 2>&1 &
 nohup python -u run_eval.py 7 llama2-13b --dataset AB > logs/7.log 2>&1 &
+
+nohup python -u run_eval.py 0 llama2-13b --dataset FZ  > logs/0.log 2>&1 &
+nohup python -u run_eval.py 1 llama2-13b --dataset WA  > logs/1.log 2>&1 &
+nohup python -u run_eval.py 2 llama2-13b --dataset AB > logs/2.log 2>&1 &
+nohup python -u run_eval.py 3 llama2-13b --dataset AG  > logs/3.log 2>&1 &
+nohup python -u run_eval.py 4 llama2-13b --dataset computers > logs/4.log 2>&1 &
+nohup python -u run_eval.py 5 llama2-13b --dataset cameras > logs/5.log 2>&1 &
+nohup python -u run_eval.py 6 llama2-13b --dataset shoes > logs/6.log 2>&1 &
+nohup python -u run_eval.py 7 llama2-13b --dataset DA > logs/7.log 2>&1 &
