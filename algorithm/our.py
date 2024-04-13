@@ -403,12 +403,6 @@ def cal_score2(probs, indices, labels, selected_index=-1, metric="f1", weights_d
         probs2.extend([probs[i]] * weights_dict.get(idx, 1))
         indices2.extend([idx] * weights_dict.get(idx, 1))
         labels2.extend([labels[i]] * weights_dict.get(idx, 1))
-    print(
-        f"debug!!! weights_dict: {weights_dict}, "
-        f"indices: {indices}, "
-        f"labels: {np.sum(labels)}/{len(labels)}, "
-        f"labels2: {np.sum(labels2)}/{len(labels2)}"
-    )
     if metric == "acc":
         # cal accuracy
         if len(probs2) == 0:
