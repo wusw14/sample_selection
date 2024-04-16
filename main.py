@@ -3,13 +3,11 @@ from algorithm.votek import votek, fast_votek
 from algorithm.adaicl import adaicl
 from algorithm.entropy import (
     max_entropy,
-    min_entropy,
     cbs_maxIG,
-    max_entropy_bl,
     min_entropy_bl,
 )
 from algorithm.balanced_cosine import select_by_cosine_sim
-from algorithm.our import ideal
+from algorithm.ICESEM import ICESEM
 from utils.llm import init_model
 from utils.io import load_data
 from utils.misc import MFL_l1, cal_cosine_sim, get_samples
@@ -177,12 +175,12 @@ if __name__ == "__main__":
         )
     elif args.selection_method == "cosine_sim":
         selected_indices = select_by_cosine_sim(labels, scores, args)
-    elif args.selection_method == "ideal":
-        selected_indices = ideal(
+    elif args.selection_method == "ICESEM":
+        selected_indices = ICESEM(
             model_name, model, tokenizer, entry_pairs, labels, embeddings, scores, args
         )
     elif args.selection_method == "max_entropy":
-        selected_indices = max_entropy_bl(
+        selected_indices = max_entropy(
             model_name, model, tokenizer, entry_pairs, labels, embeddings, args
         )
     elif args.selection_method == "min_entropy":

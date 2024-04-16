@@ -38,7 +38,7 @@ def max_entropy(model_name, model, tokenizer, inputs, labels, embeddings, args):
     return sorted_indices[: args.budget]
 
 
-def max_entropy_bl(model_name, model, tokenizer, inputs, labels, embeddings, args):
+def min_entropy_bl(model_name, model, tokenizer, inputs, labels, embeddings, args):
     indices = []
     entropys, predictions = cal_entropy(
         model_name, model, tokenizer, inputs, labels, embeddings, args
@@ -60,40 +60,6 @@ def max_entropy_bl(model_name, model, tokenizer, inputs, labels, embeddings, arg
             if labels[indices[-1]] == 0:
                 next_target = "pos"
     indices = indices[: args.budget]
-    return indices
-
-
-def min_entropy(model_name, model, tokenizer, inputs, labels, embeddings, args):
-    entropys, _ = cal_entropy(
-        model_name, model, tokenizer, inputs, labels, embeddings, args
-    )
-    sorted_indices = np.argsort(entropys).tolist()
-    return sorted_indices[: args.budget]
-
-
-def min_entropy_bl(model_name, model, tokenizer, inputs, labels, embeddings, args):
-    indices = []
-    entropys, predictions = cal_entropy(
-        model_name, model, tokenizer, inputs, labels, embeddings, args
-    )
-    predictions = np.array(predictions)
-    pos_indices = np.where(predictions > 0.5)[0]
-    neg_indices = np.where(predictions <= 0.5)[0]
-    # search from potential positive samples
-    if len(pos_indices) > 0:
-        pos_indices, _ = zip(
-            *sorted(zip(pos_indices, predictions[pos_indices]), key=lambda x: x[1])
-        )
-        indices = pos_indices[: ceil(args.budget / 2)]
-    else:
-        indices = []
-    # search from potential negative samples
-    if len(neg_indices) > 0:
-        neg_indices, _ = zip(
-            *sorted(zip(neg_indices, predictions[neg_indices]), key=lambda x: x[1])
-        )
-        indices += neg_indices[: args.budget - len(indices)]
-    indices = list(indices)
     return indices
 
 
