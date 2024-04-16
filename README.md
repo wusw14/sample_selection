@@ -9,6 +9,7 @@ For example,
 ```
 nohup python -u run_eval.py 0,1 llama2-70b --dataset cameras computers FZ AB DA WA > logs/01.log 2>&1 &
 ```
+To run the code, please replace the path of the LLMs in sample_selection/utils/llm.py line 44, 47
 
 # run the selection 
 ```
