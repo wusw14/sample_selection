@@ -97,7 +97,7 @@ def select_next(
     # print(f"weights_dict {weights_dict}")
     print(f"### eval indices: {list(eval_indices)}")
 
-    index, imp_rate, pred_dict = max_info_gain(
+    index, imp_rate, probs_new = max_info_gain(
         model_name,
         model,
         tokenizer,
@@ -112,10 +112,11 @@ def select_next(
         probs_N,
         next,
         no_improvement,
+        historical_probs,
         args,
     )
     print(f"selected_index = {index}, imp_rate = {imp_rate:.4f}")
-    return index, uncertain_indices, imp_rate, pred_dict, weights_dict
+    return index, uncertain_indices, imp_rate, probs_new, weights_dict
 
 
 def sampling(
@@ -370,21 +371,17 @@ def conf_func(prob):
 
 def cal_avg(conf, added_idx, sample_indices, probs, target):
     if target == "pos":
-        cond = probs > 0.5
+        cond = (probs > 0.5) & (probs < 2)
     elif target == "neg":
         cond = probs < 0.5
     else:
-        cond = np.ones(len(conf), dtype=bool)
+        cond = probs < 2
     sample_indices = np.array(sample_indices)[cond]
     conf = conf[cond]
     if len(conf) == 0:
         return 1
-    # if added_idx in sample_indices:
-    #     index = list(sample_indices).index(added_idx)
-    #     if len(conf) == 1:
-    #         return 1
-    #     conf_avg = (np.sum(conf) - conf[index]) / (len(conf) - 1)
-    # else:
+    # percentiles = np.percentile(conf, [50])
+    # return np.mean(percentiles)
     conf_avg = np.mean(conf)
     return conf_avg
 
@@ -399,49 +396,48 @@ def cal_score1(probs1, indices1, selected_index=-1):
         conf_p1_avg = cal_avg(conf, selected_index, indices1, probs1, "pos")
         conf_p2_avg = cal_avg(conf, selected_index, indices1, probs1, "neg")
         conf_avg = cal_avg(conf, selected_index, indices1, probs1, "all")
-        score1 = conf_avg / 2 + min(conf_p1_avg, conf_p2_avg) / 2
+        # score1 = conf_avg / 2 + min(conf_p1_avg, conf_p2_avg) / 2
+        score1 = (conf_p1_avg + conf_p2_avg) / 2
     return score1, conf_p1_avg, conf_p2_avg, conf_avg
 
 
-def cal_score2(probs, indices, labels, selected_index=-1, metric="f1", weights_dict={}):
-    probs2, indices2, labels2 = [], [], []
-    for i, idx in enumerate(indices):
-        probs2.extend([probs[i]] * weights_dict.get(idx, 1))
-        indices2.extend([idx] * weights_dict.get(idx, 1))
-        labels2.extend([labels[i]] * weights_dict.get(idx, 1))
-    if metric == "acc":
-        # cal accuracy
-        if len(probs2) == 0:
-            CE_pos, CE_neg, CE_avg, score2 = 1, 1, 1, 1
+def cal_score2(probs, indices, labels, weights=False, historical_probs=None, log=False):
+    def cal_f1(probs, labels):
+        probs = np.array(probs)
+        if np.sum(labels) > 0:
+            pred = probs > 0.5
         else:
-            probs2 = np.array(probs2)
-            CE_scores = labels2 == (probs2 > 0.5)
-            CE_pos = cal_avg(CE_scores, selected_index, indices2, labels2, "pos")
-            CE_neg = cal_avg(CE_scores, selected_index, indices2, labels2, "neg")
-            CE_avg = cal_avg(CE_scores, selected_index, indices2, labels2, "all")
-            score2 = CE_avg / 2 + min(CE_pos, CE_neg) / 2
-            if CE_pos == 0:
-                score2 = 0
-        return score2, CE_pos, CE_neg, CE_avg
-    else:
-        # cal precision, recall, f1
-        if len(probs2) == 0:
-            pre, rec, f1, score2 = 1, 1, 1, 1
-        else:
-            probs2 = np.array(probs2)
-            if np.sum(labels2) > 0:
-                pred = probs2 > 0.5
-            else:
-                pred = probs2 <= 0.5
-                labels2 = 1 - np.array(labels2)
-            pre = np.sum(pred * labels2) / (np.sum(pred) + 1e-6)
-            rec = np.sum(pred * labels2) / (np.sum(labels2) + 1e-6)
-            f1 = 2 * pre * rec / (pre + rec + 1e-6)
-            if metric == "f1":
-                score2 = f1
-            else:
-                score2 = f1 / 2 + min(pre, rec) / 2
-        return score2, pre, rec, f1
+            pred = probs <= 0.5
+            labels = 1 - np.array(labels)
+        pre = np.sum(pred * labels) / (np.sum(pred) + 1e-6)
+        rec = np.sum(pred * labels) / (np.sum(labels) + 1e-6)
+        f1 = 2 * pre * rec / (pre + rec + 1e-6)
+        return f1, pre, rec
+
+    probs = np.array(probs)
+    labels = np.array(labels)
+    f1_list = []
+    if weights:
+        for pct in [0, -1]:
+            weights_dict = get_weights_dict(historical_probs, indices, pct, log=log)
+            probs2, indices2, labels2 = [], [], []
+            for i, idx in enumerate(indices):
+                probs2.extend([probs[i]] * weights_dict.get(idx, 1))
+                indices2.extend([idx] * weights_dict.get(idx, 1))
+                labels2.extend([labels[i]] * weights_dict.get(idx, 1))
+            f1, pre, rec = cal_f1(probs2, labels2)
+            f1_list.append(f1)
+    f1, pre, rec = cal_f1(probs, labels)
+    f1_list.append(f1)
+    conf_pos = np.mean(probs[labels == 1])
+    conf_neg = 1 - np.mean(probs[labels == 0])
+    score2 = np.mean(f1_list)
+    score3 = (conf_pos + conf_neg) / 2
+    print(
+        f"score3: {score3:.4f} conf_pos: {conf_pos:.4f} conf_neg: {conf_neg:.4f} "
+        f"score2: {score2:.4f} F1 list: {f1_list}"
+    )
+    return score2, score3, pre, rec, f1_list[-1]
 
 
 def cal_info_score(
@@ -451,29 +447,30 @@ def cal_info_score(
     indices2,
     labels2,
     selected_index=-1,
-    p=-1,
-    label=-1,
-    weights_dict={},
-    metric="f1",
+    historical_probs=None,
 ):
-    score1, conf_p1_avg, conf_p2_avg, conf_avg = cal_score1(probs1, indices1)
-    score2, p1, p2, avg = cal_score2(
-        probs2, indices2, labels2, selected_index, metric, weights_dict
-    )
-    score = 0.5 * score1 + score2
-
     if selected_index == -1:
         printinfo = f"[Base] "
+        log = True
     else:
-        printinfo = (
-            f"[New] newly added index: {selected_index}, predicted_prob: {p:.4f}, "
-            f"ground truth label: {label}, "
-        )
+        printinfo = f"[New] newly added index: {selected_index}, "
+        log = False
+
+    score1, conf_p1_avg, conf_p2_avg, conf_avg = cal_score1(probs1, indices1)
+    score2, score3, p1, p2, avg = cal_score2(
+        probs2,
+        indices2,
+        labels2,
+        weights=True,
+        historical_probs=historical_probs,
+        log=log,
+    )
+    score = ((score3 + score1) / 2 + 1) * score2
     printinfo += f"score_all: {score:.4f}, score1: {score1:.4f}, score2: {score2:.4f}, "
     printinfo += f"conf_p1: {conf_p1_avg:.4f}, conf_p2: {conf_p2_avg:.4f}, conf_avg: {conf_avg:.4f}, "
     printinfo += f"avg: {avg:.4f}, p1: {p1:.4f}, p2: {p2:.4f}, "
     print(f"{printinfo}")
-    return score, score1, score2
+    return score, score1, score2, score3
 
 
 def sort_labeled_eval(labeled_eval_org, probs, labels):
@@ -542,10 +539,46 @@ def sort_labeled_eval(labeled_eval_org, probs, labels):
     return labeled_eval_org
 
 
-def get_weights_dict(probs, candidate_indices):
-    probs = np.array(probs)
-    probs_N = deepcopy(probs)
-    probs = probs[probs < 2]
+def split_labeled_eval(labeled_eval, probs, labels):
+    labeled_probs = np.array(probs)[labeled_eval]
+    labels = np.array(labels)[labeled_eval]
+    # sort the labeled eval by probs
+    labeled_eval, labeled_probs, labels = zip(
+        *sorted(zip(labeled_eval, labeled_probs, labels), key=lambda x: x[1])
+    )
+    print(
+        f"labeled_eval: {labeled_eval}, labeled_probs: {labeled_probs}, "
+        f"labels: {labels}"
+    )
+    first_pos_idx = -1
+    for i, idx in enumerate(labeled_eval):
+        if labels[i] == 1 or labeled_probs[i] > 0.5:
+            first_pos_idx = i
+            break
+    last_neg_idx = -1
+    for i, idx in enumerate(labeled_eval):
+        if labels[i] == 0 or labeled_probs[i] < 0.5:
+            last_neg_idx = i
+    if first_pos_idx == -1 or last_neg_idx == -1:
+        return (
+            labeled_eval,
+            [],
+            np.max(probs[labeled_eval]),
+            np.min(probs[labeled_eval]),
+        )
+    pos_thr = labeled_probs[min(last_neg_idx + 1, len(labeled_eval) - 1)]
+    neg_thr = labeled_probs[max(first_pos_idx - 1, 0)]
+    left_idx = max(0, first_pos_idx - 5)
+    right_idx = min(len(labeled_eval), last_neg_idx + 6)
+    labeled_eval_hard = list(labeled_eval[left_idx:right_idx])
+    labeled_eval_easy = list(labeled_eval[:left_idx]) + list(labeled_eval[right_idx:])
+    return labeled_eval_hard, labeled_eval_easy, pos_thr, neg_thr
+
+
+def get_weights_dict(historical_probs, candidate_indices, pct, log=False):
+    # probs = np.array(probs)
+    # probs_N = deepcopy(probs)
+    # probs = probs[probs < 2]
     # # partition probs into bins
     # bins = np.linspace(np.min(probs), np.max(probs) + 1e-6, 6)
     # org_num, labeled_num = {}, {}
@@ -560,18 +593,57 @@ def get_weights_dict(probs, candidate_indices):
     #     for idx in candidate_indices:
     #         if probs_N[idx] >= bins[i] and probs_N[idx] < bins[i + 1]:
     #             weights_dict[idx] = round(org_num[i] / (labeled_num[i] + 1e-6))
-    indices_probs = list(zip(candidate_indices, probs_N[candidate_indices]))
-    indices, probs_of_indices = zip(*sorted(indices_probs, key=lambda x: x[1]))
-    probs_bounds = [0]
-    for i in range(len(probs_of_indices) - 1):
-        probs_bounds.append((probs_of_indices[i] + probs_of_indices[i + 1]) / 2)
-    probs_bounds.append(1)
+    # # slice the probs into several bins
+    # indices_probs = list(zip(candidate_indices, probs_N[candidate_indices]))
+    # indices, probs_of_indices = zip(*sorted(indices_probs, key=lambda x: x[1]))
+    # probs_bounds = [0]
+    # for i in range(len(probs_of_indices) - 1):
+    #     probs_bounds.append((probs_of_indices[i] + probs_of_indices[i + 1]) / 2)
+    # probs_bounds.append(1)
+    # weights_dict = {}
+    # for i, idx in enumerate(indices):
+    #     weights_dict[idx] = np.sum(
+    #         (probs >= probs_bounds[i]) & (probs < probs_bounds[i + 1])
+    #     )
+    # weight each sample based on distance
+    # only consider the samples with all probs < 2
+    historical_probs = np.array(historical_probs)  # [T, N]
+    reps = deepcopy(historical_probs.T)  # [N, T]
+    weights = np.array([1.0 / 2 ** (len(reps[0]) - i) for i in range(len(reps[0]))])
+    reps = reps * weights[None,]
+    candidate_reps = reps[candidate_indices]  # [N2, T]
+    probs_max = np.max(historical_probs, 0)
+    reps = reps[probs_max < 2]  # [N1, T]
+    # calculate the distance between the candidate samples and the labeled samples
+    dist = distance_matrix(reps, candidate_reps, p=2)  # [N1, N2]
+    # score = 1 / (dist + 1e-6)
+    # sigma = np.percentile(dist, 100 / len(candidate_reps))
+    if pct >= 0 and pct <= 100:
+        sigma = max(np.percentile(dist, pct), 1e-2)
+    else:
+        sigma = max(np.sqrt(np.mean(dist**2)), 1e-2)
+    score = np.exp(-(dist**2) / 2 / sigma**2)
+    score = score / np.sum(score, 1, keepdims=True)  # [N1, N2]
     weights_dict = {}
-    for i, idx in enumerate(indices):
-        weights_dict[idx] = np.sum(
-            (probs >= probs_bounds[i]) & (probs < probs_bounds[i + 1])
+    for i in range(len(candidate_indices)):
+        weights_dict[candidate_indices[i]] = round(np.sum(score[:, i]))
+    if log:
+        print(
+            f"#### sigma: {sigma:.4f}, dist: {list(dist[0])}, score: {list(score[0])}"
+            f" weights_dict: {weights_dict}"
         )
+
     return weights_dict
+
+
+def get_test_inputs(test_indices, inputs, embs, labels=None):
+    test_inputs, test_embs, test_labels = [], [], []
+    for idx in test_indices:
+        test_inputs.append(inputs[idx])
+        test_embs.append(embs[idx])
+        if labels is not None:
+            test_labels.append(labels[idx])
+    return test_inputs, test_embs, test_labels
 
 
 def max_info_gain(
@@ -589,6 +661,7 @@ def max_info_gain(
     probs_N,
     next,
     no_improvement,
+    historical_probs,
     args,
 ):
     if type(weights_dict) != dict:
@@ -616,17 +689,14 @@ def max_info_gain(
     if len(candidate_indices) == 0:
         return None, -1, {}
 
-    inputs_of_E, labels_of_E, embs_of_E = [], [], []
-    for idx in selected_indices:
-        inputs_of_E.append(inputs[idx])
-        labels_of_E.append(labels[idx])
-        embs_of_E.append(embs[idx])
-
-    sample_inputs, sample_embs = [], []
-    for idx in range(len(probs_N)):
-        if idx in candidate_indices and probs_N[idx] == 2:
-            sample_inputs.append(inputs[idx])
-            sample_embs.append(embs[idx])
+    inputs_of_E, embs_of_E, labels_of_E = get_test_inputs(
+        selected_indices, inputs, embs, labels
+    )
+    unpredict_indices = []
+    for idx in set(candidate_indices).union(set(sample_indices_org)):
+        if probs_N[idx] == 2:
+            unpredict_indices.append(idx)
+    sample_inputs, sample_embs, _ = get_test_inputs(unpredict_indices, inputs, embs)
 
     # pred the newly selected examples
     probs = np.array(probs_N)
@@ -641,66 +711,49 @@ def max_info_gain(
             args,
         )
         _, probs1 = inference(model_name, model, tokenizer, prompts, args)
-        for idx in range(len(probs_N)):
-            if idx in candidate_indices and probs_N[idx] == 2:
-                probs[idx] = probs1.pop(0)
-    weights_dict = get_weights_dict(probs, labeled_eval_org)
-    print(f"[weights_dict]: {weights_dict}")
-    labeled_eval_org = sort_labeled_eval(labeled_eval_org, probs, labels)
+        for j, idx in enumerate(unpredict_indices):
+            probs[idx] = probs1[j]
+    # weights_dict = get_weights_dict(probs, labeled_eval_org)
+    # print(f"[weights_dict]: {weights_dict}")
 
-    if len(candidate_indices) > 3:
-        T = 3
-    else:
-        T = 1
-    tau = round(len(candidate_indices) ** (1.0 / T))
-    print(f"********* tau: {tau}")
-    unlabeled_pred, labeled_pred = {}, {}
-    sample_indices_last, labeled_eval_last = [], []
-    for t in range(1, T + 1):
-        pred_dict_collections, imp_rate_collections, score_collections = {}, {}, {}
-        un_eval_size = max(10, np.round(args.eval_size / tau ** (T - t)).astype(int))
-        labeled_eval_size = max(
-            10, np.round(len(labeled_eval_org) / tau ** (T - t)).astype(int)
-        )
-        sample_indices = list(sample_indices_org)[:un_eval_size]
-        labeled_eval = list(labeled_eval_org)[:labeled_eval_size]
-        labeled_labels = np.array(labels)[labeled_eval]
-        print(
-            f"\n**********[Eval] iteration {t} candidates: {len(candidate_indices)} "
-            f" un_eval_size: {un_eval_size}, labeled_eval_size: {labeled_eval_size}"
-            f" labeled_labels: {np.sum(labeled_labels)}/{len(labeled_labels)}"
-        )
+    # labeled_eval_org = sort_labeled_eval(labeled_eval_org, probs, labels)
+    labeled_eval_hard, labeled_eval_easy, pos_thr, neg_thr = split_labeled_eval(
+        labeled_eval_org, probs, labels
+    )
+    print(
+        f"labeled_eval_hard ({np.sum(labels[labeled_eval_hard])}/{len(labeled_eval_hard)}): {labeled_eval_hard}, "
+        f"labeled_eval_all: ({np.sum(labels[labeled_eval_org])}/{len(labeled_eval_org)})"
+    )
+    # pos_thr, neg_thr = 0.5, 0.5
+    # pos_thr, neg_thr = np.max(probs[labeled_eval_hard]), np.min(
+    #     probs[labeled_eval_hard]
+    # )
+    sample_indices_org = [
+        idx
+        for idx in sample_indices_org
+        if probs[idx] <= neg_thr or probs[idx] >= pos_thr
+    ]
+    print(
+        f"sample_indices of high certainty: {len(sample_indices_org)} "
+        f"pos_thr: {pos_thr:.4f}, neg_thr: {neg_thr:.4f}"
+    )
 
-        sample_inputs, sample_embs = [], []
-        for idx in sample_indices[len(sample_indices_last) :]:
-            sample_inputs.append(inputs[idx])
-            sample_embs.append(embs[idx])
-
-        labeled_inputs, labeled_embs = [], []
-        for idx in labeled_eval[len(labeled_eval_last) :]:
-            labeled_inputs.append(inputs[idx])
-            labeled_embs.append(embs[idx])
-
-        sample_indices_last = list(sample_indices)
-        labeled_eval_last = list(labeled_eval)
-
-        # calculate information gain of each uncertain sample
-        score_base, score1_base, score2_base = cal_info_score(
-            probs[sample_indices],
-            sample_indices,
-            probs[labeled_eval],
-            labeled_eval,
-            labeled_labels,
-            weights_dict=weights_dict,
-            metric=args.metric,
-        )
-
-        # part 2: predictions on the labeled data
-        score2_dict, score2_info = {}, {}
+    pred_results = {idx: np.ones(len(probs)) * 2 for idx in candidate_indices}
+    for r in range(2):
+        if r == 0:
+            labeled_eval_cur = deepcopy(labeled_eval_hard)
+            labeled_pred = deepcopy(labeled_eval_hard)
+            print(f"[1st filtering based on the labeled_eval_hard]")
+        else:
+            labeled_eval_cur = deepcopy(labeled_eval_org)
+            labeled_pred = deepcopy(labeled_eval_easy)
+            print(f"[2nd filtering based on the labeled_eval_all]")
+        labeled_inputs, labeled_embs, _ = get_test_inputs(labeled_pred, inputs, embs)
+        score2_dict, score2_info, score3_dict = {}, {}, {}
         for i, idx in enumerate(candidate_indices):
-            inputs_of_E.append(inputs[idx])
-            labels_of_E.append(labels[idx])
-            embs_of_E.append(embs[idx])
+            inputs_of_E, embs_of_E, labels_of_E = get_test_inputs(
+                selected_indices + [idx], inputs, embs, labels
+            )
             if len(labeled_inputs) > 0:
                 prompts = construct_prompt(
                     inputs_of_E,
@@ -713,56 +766,76 @@ def max_info_gain(
                 _, labeled_probs = inference(
                     model_name, model, tokenizer, prompts, args
                 )
-            else:
-                labeled_probs = []
-            if t > 1:
-                labeled_probs = np.concatenate([labeled_pred[idx], labeled_probs])
-            labeled_pred[idx] = deepcopy(labeled_probs)
-            score2_p1, p1, p2, avg = cal_score2(
-                labeled_probs,
-                labeled_eval,
-                labeled_labels,
-                idx,
-                metric=args.metric,
-                weights_dict=weights_dict,
+                for j, eval_idx in enumerate(labeled_pred):
+                    pred_results[idx][eval_idx] = labeled_probs[j]
+            score2_p1, score3_p1, p1, p2, avg = cal_score2(
+                pred_results[idx][labeled_eval_cur],
+                labeled_eval_cur,
+                labels[labeled_eval_cur],
+                weights=True,
+                historical_probs=historical_probs,
+                log=True if i == 0 else False,
             )
-            if idx in labeled_eval:
-                labeled_probs[labeled_eval.index(idx)] = probs[idx]
-            score2_p2, p1, p2, avg = cal_score2(
-                labeled_probs,
-                labeled_eval,
-                labeled_labels,
-                idx,
-                metric=args.metric,
-                weights_dict=weights_dict,
+            labeled_eval_probs = deepcopy(pred_results[idx][labeled_eval_cur])
+            if idx in labeled_eval_cur:
+                labeled_eval_probs[labeled_eval_cur.index(idx)] = probs[idx]
+            score2_p2, score3_p2, p1, p2, avg = cal_score2(
+                labeled_eval_probs,
+                labeled_eval_cur,
+                labels[labeled_eval_cur],
+                weights=True,
+                historical_probs=historical_probs,
             )
             score2_dict[idx] = (score2_p1 + score2_p2) / 2
+            score3_dict[idx] = (score3_p1 + score3_p2) / 2
             score2_info[idx] = (f"{p1:.4f}", f"{p2:.4f}", f"{avg:.4f}")
-            del inputs_of_E[-1]
-            del labels_of_E[-1]
-            del embs_of_E[-1]
-
-        pruned_ratio = 1 - 2.0 / tau
-        if len(candidate_indices) * pruned_ratio > 1:
-            score2_thr = np.percentile(list(score2_dict.values()), pruned_ratio * 100)
-            score2_thr = score2_thr - 1e-3
+            print(
+                f"idx: {idx}, prob: {probs[idx]:.4f}, label: {labels[idx]}, "
+                f"score2: {score2_dict[idx]:.4f}, info: {list(score2_info[idx])}"
+            )
+        score2_base, _, _, _, _ = cal_score2(
+            probs[labeled_eval_org],
+            labeled_eval_org,
+            labels[labeled_eval_org],
+            weights=True,
+            historical_probs=historical_probs,
+        )
+        if r == 0:
+            score2_thr = max(np.median(list(score2_dict.values())), score2_base * 0.9)
+            print(f"[1st step score2_thr]: {score2_thr:.4f}")
         else:
-            score2_thr = 0
-        if t == T:
-            score2_thr = max(score2_base * 0.99, score2_thr)
-        print(f"pruned_ratio: {pruned_ratio:.4f}, score2_thr: {score2_thr:.4f}")
+            score2_thr = score2_base * 0.98
+            print(f"[2nd step score2_thr]: {score2_thr:.4f}")
+        candidate_indices = [
+            idx for idx in candidate_indices if score2_dict[idx] >= score2_thr
+        ]
+    if len(candidate_indices) == 0:
+        return None, -1, {}
+
+    # succesive halving
+    if len(candidate_indices) > 3:
+        T = 3
+    else:
+        T = 1
+    tau = round(len(candidate_indices) ** (1.0 / T))
+    print(f"********* tau: {tau}")
+    for t in range(1, T + 1):
+        score_collections = {}
+        un_eval_size = max(10, np.round(args.eval_size / tau ** (T - t)).astype(int))
+        sample_indices = []
+        for idx in list(sample_indices_org)[:un_eval_size]:
+            if pred_results[candidate_indices[0]][idx] == 2:
+                sample_indices.append(idx)
+        sample_inputs, sample_embs, _ = get_test_inputs(sample_indices, inputs, embs)
+        print(
+            f"\n**********[Eval] iteration {t} candidates: {len(candidate_indices)} "
+            f" un_eval_size: {un_eval_size} sample_inputs: {len(sample_inputs)}"
+        )
 
         for i, idx in enumerate(candidate_indices):
-            if score2_dict[idx] < score2_thr:
-                score_collections[idx] = (
-                    score2_dict[idx] * scalar_dict[labels[idx]] * 0.5
-                )
-                imp_rate_collections[idx] = score2_dict[idx] / score2_base - 1
-                print(f"pruned index {idx}, score: {score_collections[idx]:.4f}")
-                continue
-            inputs_of_E.append(inputs[idx])
-            labels_of_E.append(labels[idx])
-            embs_of_E.append(embs[idx])
+            inputs_of_E, embs_of_E, labels_of_E = get_test_inputs(
+                selected_indices + [idx], inputs, embs, labels
+            )
             # part 1: predictions on the unlabeled data
             if len(sample_inputs) > 0:
                 prompts = construct_prompt(
@@ -774,88 +847,95 @@ def max_info_gain(
                     args,
                 )
                 _, probs1 = inference(model_name, model, tokenizer, prompts, args)
-            else:
-                probs1 = []
-            if t > 1:
-                probs1 = np.concatenate([unlabeled_pred[idx], probs1])
-            unlabeled_pred[idx] = probs1
-            score1 = cal_score1(probs1, sample_indices)[0]
-            score = 0.5 * score1 + score2_dict[idx]
-            score = score * scalar_dict[labels[idx]]
-
-            pred_dict_collections[idx] = {}
-            for j, index in enumerate(sample_indices):
-                pred_dict_collections[idx][index] = probs1[j]
-            for j, index in enumerate(labeled_eval):
-                pred_dict_collections[idx][index] = labeled_pred[idx][j]
-            score1_imp_rate = (score1 + 1e-6) / (score1_base + 1e-6) - 1
-            score2_imp_rate = (score2_dict[idx] + 1e-6) / (score2_base + 1e-6) - 1
-            score_imp_rate = score / scalar_dict[labels[idx]] / score_base - 1
-            if score2_imp_rate < -0.01:
-                imp_rate = score2_imp_rate
-            elif score1_imp_rate < -0.02:
-                imp_rate = score1_imp_rate * 0.5
-            else:
-                imp_rate = score_imp_rate
-            imp_rate_collections[idx] = imp_rate
-            if imp_rate < -0.01 and t == T:
-                score_collections[idx] = -1
-            else:
-                score_collections[idx] = score
+                for j, eval_idx in enumerate(sample_indices):
+                    pred_results[idx][eval_idx] = probs1[j]
+            # unlabeled_eval_indices = np.where(pred_results[idx] < 1)[0]
+            unlabeled_eval_indices = list(sample_indices_org)[:un_eval_size]
+            score1, _, _, _ = cal_score1(
+                pred_results[idx][unlabeled_eval_indices], unlabeled_eval_indices
+            )
+            score = ((score1 + score3_dict[idx]) / 2 + 1) * score2_dict[idx]
+            score_collections[idx] = score * scalar_dict[labels[idx]]
             print(
                 f"added index {idx}, prob: {probs[idx]:.4f}, label: {labels[idx]}, "
                 f"scalar: {scalar_dict[labels[idx]]:.4f}, score: {score:.4f}, score1: {score1:.4f}, "
                 f"score2: {score2_dict[idx]:.4f}, score2_info: {list(score2_info[idx])} "
-                f"imp_rate: {imp_rate:.4f}, score_final: {score_collections[idx]:.4f}"
+                f"score_final: {score_collections[idx]:.4f} "
+                f"unlabeled_eval_indices: {len(unlabeled_eval_indices)} "
             )
-            del inputs_of_E[-1]
-            del labels_of_E[-1]
-            del embs_of_E[-1]
-        # top 5
-        top_indices, _ = zip(
-            *sorted(score_collections.items(), key=lambda x: x[1], reverse=True)
-        )
-        candidate_indices = top_indices[: np.ceil(len(top_indices) / tau).astype(int)]
-        candidate_indices = list(candidate_indices)
-        score2_thr = score2_dict[candidate_indices[0]]
-        for idx in score2_dict:
-            if (
-                score2_dict[idx] >= score2_thr
-                and imp_rate_collections.get(idx, 0) > 0
-                and idx not in candidate_indices
-                and idx not in labeled_eval
-                and score2_thr < 1
-            ):
-                candidate_indices.append(idx)
+        # top indices
+        if t < T and len(candidate_indices) > 2:
+            top_indices, _ = zip(
+                *sorted(score_collections.items(), key=lambda x: x[1], reverse=True)
+            )
+            candidate_indices = top_indices[
+                : np.ceil(len(top_indices) / tau).astype(int)
+            ]
+            candidate_indices = list(candidate_indices)
         if len(candidate_indices) < 2:
             print(f"Not too much candidates left for comparison!!!")
             break
-    candidate_indices, scaled_imp_rates = [], []
-    for idx, imp_rate in imp_rate_collections.items():
-        if imp_rate < 0:
-            continue
-        candidate_indices.append(idx)
-        scaled_imp_rates.append(imp_rate * scalar_dict[labels[idx]])
-    if (
-        len(scaled_imp_rates) > 1
-        and len(selected_indices) < args.k - 1
-        and args.argmax == False
-    ):
-        scaled_imp_rates = np.array(scaled_imp_rates)
-        scaled_imp_rates = scaled_imp_rates / max(np.min(scaled_imp_rates), 0.01)
-        scaled_imp_rates = np.exp(scaled_imp_rates)
-        selected_probs = np.array(scaled_imp_rates) / np.sum(scaled_imp_rates)
-        best_sample = np.random.choice(candidate_indices, p=selected_probs)
-        print(
-            f"indices with imp_rate > 0: {candidate_indices}, "
-            f"scaled_imp_rates: {list(scaled_imp_rates)}, "
-            f"selected_probs: {list(selected_probs)}"
+
+    # calculate the imp rate for the remaining candidates and choose the best
+    print(f"********* [Final Round] candidates: {candidate_indices}")
+    # labeled_for_last_eval = [
+    #     idx for idx in labeled_eval_org if idx not in candidate_indices
+    # ]
+    labeled_for_last_eval = labeled_eval_org
+    # weights_dict = get_weights_dict(historical_probs, labeled_for_last_eval)
+    # print(f"[weights dict]: {weights_dict}")
+
+    # final evaluation
+    # unlabeled_eval_indices_p1 = np.where(pred_results[candidate_indices[0]] < 2)[0]
+    # unlabeled_eval_indices_p2 = np.where(probs < 2)[0]
+    # unlabeled_eval_indices = list(
+    #     set(unlabeled_eval_indices_p1).intersection(set(unlabeled_eval_indices_p2))
+    # )
+    unlabeled_eval_indices = list(sample_indices_org)
+    print(
+        f"[Final Round] unlabeled_eval_indices: {len(unlabeled_eval_indices)} "
+        # f"unlabeled_eval_indices_p1: {len(unlabeled_eval_indices_p1)} "
+        # f"unlabeled_eval_indices_p2: {len(unlabeled_eval_indices_p2)}"
+    )
+    score_base, score1_base, score2_base, score3_base = cal_info_score(
+        probs[unlabeled_eval_indices],
+        unlabeled_eval_indices,
+        probs[labeled_for_last_eval],
+        labeled_for_last_eval,
+        labels[labeled_for_last_eval],
+        historical_probs=historical_probs,
+    )
+    best_sample, best_imp_rate, best_score = -1, -1, -1
+    for idx in candidate_indices:
+        score1, _, _, _ = cal_score1(
+            pred_results[idx][unlabeled_eval_indices],
+            unlabeled_eval_indices,
         )
-    else:
-        best_sample = max(score_collections, key=score_collections.get)
-    best_imp_rate = imp_rate_collections.get(best_sample, -1)
-    pred_dict = pred_dict_collections.get(best_sample, {})
-    return best_sample, best_imp_rate, pred_dict
+        score2 = score2_dict.get(idx, 0)
+        score3 = score3_dict.get(idx, 0)
+        score = ((score1 + score3_dict[idx]) / 2 + 1) * score2_dict[idx]
+        imp_rate = score / score_base - 1
+        imp_rate1 = score1 / score1_base - 1  # * 0.5
+        imp_rate2 = (score2 + 1e-6) / (score2_base + 1e-6) - 1
+        imp_rate3 = (score3 + 1e-6) / (score3_base + 1e-6) - 1
+        # if min(imp_rate1, imp_rate2) < -0.01:
+        #     imp_rate = min(imp_rate1, imp_rate2)
+        score = score * scalar_dict[labels[idx]]
+        print(
+            f"added index {idx}, prob: {probs[idx]:.4f}, label: {labels[idx]}, "
+            f"score: {score:.4f}, imp_rate: {imp_rate:.4f} "
+            f"score1: {score1:.4f}, imp_rate1: {imp_rate1:.4f} "
+            f"score2: {score2:.4f}, imp_rate2: {imp_rate2:.4f} "
+            f"score3: {score3:.4f}, imp_rate3: {imp_rate3:.4f} "
+        )
+        if imp_rate > -0.01 and (
+            score > best_score or best_imp_rate < 0 and imp_rate > 0
+        ):
+            best_sample = idx
+            best_imp_rate = imp_rate
+            best_score = score
+    probs_new = pred_results.get(best_sample, np.ones(len(probs)) * 2)
+    return best_sample, best_imp_rate, probs_new
 
 
 def determine_next_target(labels_of_E, selected_indices, probs, labeled_set, labels):
@@ -915,17 +995,16 @@ def ICESEM(model_name, model, tokenizer, inputs, labels, embs, scores, args):
     unselected_indices = list(range(len(labels)))
     print(f"candidates: {len(inputs)}")
     selected_indices, labeled_set = warm_up(unselected_indices, scores, labels)
-    inputs_of_E, labels_of_E, embs_of_E = [], [], []
+    inputs_of_E, embs_of_E, labels_of_E = get_test_inputs(
+        selected_indices, inputs, embs, labels
+    )
     for idx in selected_indices:
-        inputs_of_E.append(inputs[idx])
-        labels_of_E.append(labels[idx])
-        embs_of_E.append(embs[idx])
         del unselected_indices[unselected_indices.index(idx)]
 
     # iterative sampling by confidence
     historical_probs = []
     imp_thr = 0.01
-    last_pred = {}
+    last_pred = np.ones(len(inputs)) * 2
     no_improvement = False
     start_time = time.time()
     no_sig_imp_list = []
@@ -937,15 +1016,10 @@ def ICESEM(model_name, model, tokenizer, inputs, labels, embs, scores, args):
 
         if len(no_sig_imp_list) == 0 and no_improvement == False:
             # LLM's predictions based on selected examples $\mathbf{E}$
-            pred_indices, inputs_of_U, embs_of_U, labels_of_U = [], [], [], []
-            print(f"debug+++ last_pred: {list(last_pred.keys())}")
-            for idx in unselected_indices:
-                if idx in last_pred:
-                    continue
-                pred_indices.append(idx)
-                inputs_of_U.append(inputs[idx])
-                embs_of_U.append(embs[idx])
-                labels_of_U.append(labels[idx])
+            pred_indices = [idx for idx in unselected_indices if last_pred[idx] > 1]
+            inputs_of_U, embs_of_U, labels_of_U = get_test_inputs(
+                pred_indices, inputs, embs, labels
+            )
             print(f"debug+++ pred ratio {len(inputs_of_U)}/{len(unselected_indices)}")
             if len(inputs_of_U) > 0:
                 prompts = construct_prompt(
@@ -956,14 +1030,9 @@ def ICESEM(model_name, model, tokenizer, inputs, labels, embs, scores, args):
                 _, probs = inference(model_name, model, tokenizer, prompts, args)
                 # update the historical information
                 probs = list(np.clip(np.array(probs), 1e-6, 1 - 1e-6))
-            else:
-                probs = []
-            probs_N = np.ones(len(labels)) * 2
-            for idx in unselected_indices:
-                if idx in last_pred:
-                    probs_N[idx] = last_pred[idx]
-                else:
-                    probs_N[idx] = probs.pop(0)
+                for j, idx in enumerate(pred_indices):
+                    last_pred[idx] = probs[j]
+            probs_N = deepcopy(last_pred)
             historical_probs.append(probs_N)  # [T, N]
             # evaluate the performance of the current model
             precision, recall, f1 = evaluate(
@@ -979,16 +1048,10 @@ def ICESEM(model_name, model, tokenizer, inputs, labels, embs, scores, args):
                 sample_type="MFL",
             )
         else:
-            probs_N = np.ones(len(labels)) * 2
-            for idx in last_pred:
-                probs_N[idx] = last_pred[idx]
-            # update the predictions on the eval_indices
-            sample_inputs, sample_embs = [], []
-            for idx in range(len(probs_N)):
-                if idx in eval_indices and probs_N[idx] == 2:
-                    sample_inputs.append(inputs[idx])
-                    sample_embs.append(embs[idx])
-
+            sample_indices = [idx for idx in eval_indices if last_pred[idx] > 1]
+            sample_inputs, sample_embs, _ = get_test_inputs(
+                sample_indices, inputs, embs
+            )
             # pred the newly selected examples
             print(f"debug!!! predict newly added: {len(sample_inputs)}")
             if len(sample_inputs) > 0:
@@ -1001,9 +1064,9 @@ def ICESEM(model_name, model, tokenizer, inputs, labels, embs, scores, args):
                     args,
                 )
                 _, probs1 = inference(model_name, model, tokenizer, prompts, args)
-                for idx in range(len(probs_N)):
-                    if idx in eval_indices and probs_N[idx] == 2:
-                        probs_N[idx] = probs1.pop(0)
+                for j, idx in enumerate(sample_indices):
+                    last_pred[idx] = probs1[j]
+            probs_N = deepcopy(last_pred)
         probs_print = [f"{v:.4f}" for v in probs_N]
         print(f"{probs_print}")
         next = 2
@@ -1012,7 +1075,7 @@ def ICESEM(model_name, model, tokenizer, inputs, labels, embs, scores, args):
             f"remaining budget: {args.budget - len(labeled_set)}, "
             f"beam size: {args.beam_size}, next: {next}"
         )
-        idx, labeled_indices, imp_rate, pred_dict, weights_dict = select_next(
+        idx, labeled_indices, imp_rate, probs_new, weights_dict = select_next(
             model_name,
             model,
             tokenizer,
@@ -1051,18 +1114,8 @@ def ICESEM(model_name, model, tokenizer, inputs, labels, embs, scores, args):
                 f"labels of selected: {labels_of_E}"
             )
             no_improvement = False
-            # pred_diff = []
-            # for k, v in pred_dict.items():
-            #     if probs_N[k] == 2:
-            #         continue
-            #     if v > 0.5 and probs_N[k] <= 0.5 or v <= 0.5 and probs_N[k] > 0.5:
-            #         pred_diff.append(1)
-            #     else:
-            #         pred_diff.append(0)
-            # pred_diff = np.mean(pred_diff)
-            # print(f"debug pred diff: {pred_diff:.4f}")
             pred_diff = 0
-            last_pred = dict(pred_dict)
+            last_pred = probs_new
             if imp_rate > imp_thr or cul_product > imp_thr or pred_diff > imp_thr:
                 no_sig_imp_list = []
         else:
